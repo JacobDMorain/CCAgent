@@ -1,0 +1,31 @@
+{
+  "name": "ccagent",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "smoke:gui": "pnpm --filter @ccagent/gui smoke",
+    "smoke:gui-dashboard": "pnpm --filter @ccagent/gui smoke:dashboard",
+    "acceptance:audit": "tsx scripts/acceptance-audit.ts",
+    "acceptance:local-runtime": "tsx scripts/local-runtime-acceptance.ts",
+    "acceptance:codex-mcp": "tsx scripts/codex-mcp-acceptance.ts",
+    "acceptance:real-providers": "tsx scripts/real-provider-acceptance.ts",
+    "codex:mcp:register": "tsx scripts/register-codex-mcp.ts",
+    "dev:daemon": "pnpm --filter @ccagent/daemon dev",
+    "dev:mcp": "pnpm --filter @ccagent/mcp-server dev",
+    "dev:gui": "pnpm --filter @ccagent/gui dev",
+    "package:windows": "tsx scripts/package-windows.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"Interim"}]}}
+{"type":"result","subtype":"success","result":"Final stream result","session_id":"test-session","duration_ms":1000}

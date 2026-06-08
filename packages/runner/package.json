@@ -1,0 +1,17 @@
+{
+  "name": "@ccagent/runner",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/runner/src/index.js",
+  "types": "./dist/runner/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ccagent/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

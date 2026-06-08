@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ccagent/core": ["packages/core/src/index.ts"],
+      "@ccagent/daemon": ["apps/daemon/src/index.ts"],
+      "@ccagent/daemon-client": ["packages/daemon-client/src/index.ts"],
+      "@ccagent/provider": ["packages/provider/src/index.ts"],
+      "@ccagent/proxy": ["packages/proxy/src/index.ts"],
+      "@ccagent/runner": ["packages/runner/src/index.ts"],
+      "@ccagent/secrets": ["packages/secrets/src/index.ts"],
+      "@ccagent/storage": ["packages/storage/src/index.ts"]
+    }
+  }
+}

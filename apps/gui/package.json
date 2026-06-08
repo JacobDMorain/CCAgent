@@ -1,0 +1,30 @@
+{
+  "name": "@ccagent/gui",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && vite build --config vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "dev": "tsx src/main/index.ts",
+    "smoke": "playwright test tests/electron-smoke.spec.ts",
+    "smoke:dashboard": "playwright test tests/electron-dashboard.spec.ts"
+  },
+  "dependencies": {
+    "@ccagent/core": "workspace:*",
+    "@ccagent/daemon": "workspace:*",
+    "@ccagent/daemon-client": "workspace:*",
+    "electron": "^42.3.3",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.16"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@ccagent/daemon-client",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/daemon-client/src/index.js",
+  "types": "./dist/daemon-client/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/daemon-client/src/index.d.ts",
+      "default": "./dist/daemon-client/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ccagent/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

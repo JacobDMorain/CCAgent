@@ -1,0 +1,24 @@
+{
+  "name": "@ccagent/daemon",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/apps/daemon/src/index.js",
+  "types": "./dist/apps/daemon/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@ccagent/core": "workspace:*",
+    "@ccagent/provider": "workspace:*",
+    "@ccagent/proxy": "workspace:*",
+    "@ccagent/runner": "workspace:*",
+    "@ccagent/secrets": "workspace:*",
+    "@ccagent/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

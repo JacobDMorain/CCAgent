@@ -1,0 +1,58 @@
+{
+  "items": {
+    "daemon-starts": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:00:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["daemon started from built entrypoint and GET /health returned ok"]
+    },
+    "gui-starts": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:02:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["GUI opened and displayed provider, task, and settings panes"]
+    },
+    "glm-real-provider": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:05:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["GLM provider saved with model glm-5.1 and provider test succeeded; no API key included here"]
+    },
+    "codex-mcp-registration": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:08:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["Codex listed the ccagent MCP tools from the built MCP server entrypoint"]
+    },
+    "codex-review-file-glm": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:12:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["Codex called ccagent.review_file against test.md using provider glm and model glm-5.1"]
+    },
+    "codex-receives-review": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:13:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["Codex displayed non-empty review findings from the GLM-backed run"]
+    },
+    "gui-dashboard-completed-task": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:15:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["GUI task table showed the completed GLM review task with status ok"]
+    },
+    "global-claude-settings-untouched": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:18:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["global Claude Code settings timestamp/content stayed unchanged before and after the run"]
+    },
+    "api-keys-redacted": {
+      "status": "passed",
+      "checkedAt": "2026-06-05T08:20:00.000Z",
+      "checkedBy": "local acceptance tester",
+      "evidence": ["MCP output, GUI output, and logs were inspected and did not contain provider API keys or bearer tokens"]
+    }
+  }
+}

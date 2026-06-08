@@ -1,0 +1,14 @@
+{
+  "model": "glm-5.1",
+  "max_tokens": 1024,
+  "system": "You are a reviewer.",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Review test.md" }
+      ]
+    }
+  ],
+  "stream": false
+}
