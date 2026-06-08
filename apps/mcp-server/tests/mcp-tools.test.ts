@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   createMcpServer,
   createDaemonClientFromEnv,
@@ -139,6 +142,17 @@ describe("MCP tools", () => {
     } as NodeJS.ProcessEnv);
 
     expect(client).toBeTruthy();
+  });
+
+  test("createDaemonClientFromEnv does not create config during MCP startup", async () => {
+    const configPath = join(tmpdir(), `ccagent-mcp-missing-config-${Date.now()}.json`);
+
+    const client = createDaemonClientFromEnv({
+      CCAGENT_CONFIG_PATH: configPath
+    } as NodeJS.ProcessEnv);
+
+    expect(client).toBeTruthy();
+    expect(existsSync(configPath)).toBe(false);
   });
 });
 

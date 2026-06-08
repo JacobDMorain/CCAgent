@@ -1,5 +1,5 @@
 import { DaemonClient } from "@ccagent/daemon-client";
-import { defaultConfigPath, loadDaemonSettings } from "@ccagent/daemon";
+import { defaultConfigPath, loadSettingsFromFile, mergeSettings } from "@ccagent/daemon";
 import { DpapiStore } from "@ccagent/secrets";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -77,7 +77,7 @@ export function createMcpServer(
 }
 
 export function createDaemonClientFromEnv(env: NodeJS.ProcessEnv = process.env): DaemonClient {
-  const settings = loadDaemonSettings(undefined, env.CCAGENT_CONFIG_PATH ?? defaultConfigPath());
+  const settings = mergeSettings(loadSettingsFromFile(env.CCAGENT_CONFIG_PATH ?? defaultConfigPath()));
   return new DaemonClient({
     baseUrl: env.CCAGENT_DAEMON_URL ?? `http://${settings.daemon.host}:${settings.daemon.port}`,
     token: env.CCAGENT_DAEMON_TOKEN ?? readDaemonToken(settings.daemon.authTokenRef)
@@ -85,7 +85,11 @@ export function createDaemonClientFromEnv(env: NodeJS.ProcessEnv = process.env):
 }
 
 function readDaemonToken(ref: string): string {
-  return new DpapiStore().getSync(ref);
+  try {
+    return new DpapiStore().getSync(ref);
+  } catch {
+    return "";
+  }
 }
 
 export async function startStdioServer(

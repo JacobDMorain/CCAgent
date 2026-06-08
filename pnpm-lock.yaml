@@ -100,9 +100,15 @@ importers:
       '@ccagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ccagent/daemon':
+        specifier: workspace:*
+        version: link:../daemon
       '@ccagent/daemon-client':
         specifier: workspace:*
         version: link:../../packages/daemon-client
+      '@ccagent/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
