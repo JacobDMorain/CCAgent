@@ -105,11 +105,11 @@ function findCcagentMcpBlock(text: string): string[] | undefined {
 }
 
 function isCcagentHeader(line: string): boolean {
-  return /^\s*\[(?:mcpServers|mcp_servers|mcp)\.ccagent\]\s*$/.test(line);
+  return /^\s*\[(?:mcpServers|mcp_servers)\.ccagent\]\s*$/.test(line);
 }
 
 function isCcagentSubHeader(line: string): boolean {
-  return /^\s*\[(?:mcpServers|mcp_servers|mcp)\.ccagent\./.test(line);
+  return /^\s*\[(?:mcpServers|mcp_servers)\.ccagent\./.test(line);
 }
 
 function writeManualEvidence(root: string, checkedAt: string, evidence: string[]): string {

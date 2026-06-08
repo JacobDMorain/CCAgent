@@ -38,7 +38,7 @@ export function registerCodexMcp(options: RegisterCodexMcpOptions): RegisterCode
 
   const next = `${removeExistingCcagentBlock(existing).trimEnd()}
 
-[mcp.ccagent]
+[mcp_servers.ccagent]
 command = "node"
 args = ["${entrypoint}"]
 `;

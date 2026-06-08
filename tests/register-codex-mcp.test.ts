@@ -9,7 +9,7 @@ describe("register Codex MCP", () => {
     const root = workspaceRoot();
     const configPath = join(root, ".codex", "config.toml");
     mkdirSync(join(root, ".codex"), { recursive: true });
-    writeFileSync(configPath, '[mcp.figma]\ncommand = "node"\n');
+    writeFileSync(configPath, '[mcp_servers.figma]\ncommand = "node"\n');
 
     const result = registerCodexMcp({
       root,
@@ -20,8 +20,8 @@ describe("register Codex MCP", () => {
     const text = readFileSync(configPath, "utf8");
     expect(result.backupPath).toBeDefined();
     expect(existsSync(result.backupPath!)).toBe(true);
-    expect(text).toContain("[mcp.figma]");
-    expect(text).toContain("[mcp.ccagent]");
+    expect(text).toContain("[mcp_servers.figma]");
+    expect(text).toContain("[mcp_servers.ccagent]");
     expect(text).toContain('command = "node"');
     expect(text).toContain("apps/mcp-server/dist/apps/mcp-server/src/index.js");
     expect(text).not.toContain("CCAGENT_DAEMON_TOKEN");
@@ -39,7 +39,7 @@ describe("register Codex MCP", () => {
         'command = "old"',
         "[mcp.ccagent.env]",
         'CCAGENT_DAEMON_TOKEN = "ccagent_old_secret"',
-        "[mcp.other]",
+        "[mcp_servers.other]",
         'command = "node"'
       ].join("\n")
     );
@@ -51,8 +51,9 @@ describe("register Codex MCP", () => {
     });
 
     const text = readFileSync(configPath, "utf8");
-    expect(text).toContain("[mcp.other]");
-    expect(text).toContain("[mcp.ccagent]");
+    expect(text).toContain("[mcp_servers.other]");
+    expect(text).toContain("[mcp_servers.ccagent]");
+    expect(text).not.toContain("[mcp.ccagent]");
     expect(text).toContain('command = "node"');
     expect(text).not.toContain('command = "old"');
     expect(text).not.toContain("ccagent_old_secret");

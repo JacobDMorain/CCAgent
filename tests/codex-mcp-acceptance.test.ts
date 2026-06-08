@@ -8,7 +8,7 @@ describe("Codex MCP acceptance", () => {
   test("fails without a ccagent MCP registration", () => {
     const root = workspaceRoot();
     const configPath = join(root, "config.toml");
-    writeFileSync(configPath, "[mcp.figma]\ncommand = \"node\"\n");
+    writeFileSync(configPath, "[mcp_servers.figma]\ncommand = \"node\"\n");
 
     const result = runCodexMcpAcceptance({
       root,
@@ -32,10 +32,10 @@ describe("Codex MCP acceptance", () => {
     writeFileSync(
       configPath,
       [
-        "[mcp.ccagent]",
+        "[mcp_servers.ccagent]",
         'command = "node"',
         `args = ["${mcpEntry}"]`,
-        '[mcp.ccagent.env]',
+        '[mcp_servers.ccagent.env]',
         'CCAGENT_DAEMON_URL = "http://127.0.0.1:47621"',
         'CCAGENT_DAEMON_TOKEN = "ccagent_secret_should_not_be_copied"'
       ].join("\n")
