@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   createDatabase,
+  SqliteReviewBatchStore,
   SqliteSettingsStore,
   SqliteTaskStore,
   type CreateTaskInput
@@ -48,6 +49,26 @@ describe("storage", () => {
     expect(store.listTasks(10)).toHaveLength(1);
   });
 
+  test("task history can be cleared with logs", () => {
+    const database = createDatabase(":memory:");
+    const store = new SqliteTaskStore(database);
+
+    store.createTask({
+      id: "task_1",
+      provider: "glm",
+      model: "glm-5.1",
+      cwd: "D:/project",
+      prompt: "Review test.md",
+      startedAt: "2026-06-05T10:00:00.000Z"
+    });
+    store.appendLog("task_1", "stdout", "hello");
+
+    store.clearTasks();
+
+    expect(store.listTasks(10)).toHaveLength(0);
+    expect(store.readLogs("task_1", 100)).toEqual({ content: "", truncated: false });
+  });
+
   test("settings store saves and loads daemon settings", () => {
     const database = createDatabase(":memory:");
     const store = new SqliteSettingsStore(database);
@@ -55,6 +76,37 @@ describe("storage", () => {
     store.set("daemon", { port: 47621 });
 
     expect(store.get<{ port: number }>("daemon")).toEqual({ port: 47621 });
+  });
+
+  test("review batch store saves task associations", () => {
+    const database = createDatabase(":memory:");
+    const store = new SqliteReviewBatchStore(database);
+
+    store.createBatch({
+      id: "batch_1",
+      cwd: "D:/project",
+      file: "test.md",
+      reviewStyle: "full",
+      language: "zh-CN",
+      startedAt: "2026-06-08T10:00:00.000Z",
+      tasks: [
+        { provider: "glm", model: "glm-5.1", taskId: "task_glm", position: 0 },
+        { provider: "deepseek", model: undefined, taskId: "task_deepseek", position: 1 }
+      ]
+    });
+
+    expect(store.getBatch("batch_1")).toEqual({
+      id: "batch_1",
+      cwd: "D:/project",
+      file: "test.md",
+      reviewStyle: "full",
+      language: "zh-CN",
+      startedAt: "2026-06-08T10:00:00.000Z",
+      tasks: [
+        { provider: "glm", model: "glm-5.1", taskId: "task_glm", position: 0 },
+        { provider: "deepseek", model: undefined, taskId: "task_deepseek", position: 1 }
+      ]
+    });
   });
 
   test("concurrent task status updates are serialized by sqlite transactions", async () => {

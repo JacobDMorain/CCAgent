@@ -13,6 +13,9 @@ export const defaultDaemonSettings: DaemonSettings = {
     path: "claude",
     requiredVersion: ">=1.0.0"
   },
+  codex: {
+    path: "codex.cmd"
+  },
   workspace: {
     allowedRoots: []
   },
@@ -67,6 +70,7 @@ export function mergeSettings(settings?: PartialDeep<DaemonSettings>): DaemonSet
     ...settings,
     daemon: { ...defaultDaemonSettings.daemon, ...settings?.daemon },
     claude: { ...defaultDaemonSettings.claude, ...settings?.claude },
+    codex: { ...defaultDaemonSettings.codex, ...settings?.codex },
     workspace: { ...defaultDaemonSettings.workspace, ...settings?.workspace },
     proxy: { ...defaultDaemonSettings.proxy, ...settings?.proxy },
     tasks: { ...defaultDaemonSettings.tasks, ...settings?.tasks }

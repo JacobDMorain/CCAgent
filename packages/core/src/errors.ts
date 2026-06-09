@@ -13,6 +13,7 @@ export const ErrorCodes = {
   PathDenied: "CCAGENT_PATH_DENIED",
   ProviderMissing: "CCAGENT_PROVIDER_MISSING",
   ProviderDisabled: "CCAGENT_PROVIDER_DISABLED",
+  ProviderUnavailable: "CCAGENT_PROVIDER_UNAVAILABLE",
   SecretMissing: "CCAGENT_SECRET_MISSING",
   ClaudeNotFound: "CCAGENT_CLAUDE_NOT_FOUND",
   ClaudeMissing: "CCAGENT_CLAUDE_NOT_FOUND",

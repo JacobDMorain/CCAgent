@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { ErrorCodes, ReviewFileRequestSchema, RunTaskRequestSchema } from "../src/index.js";
+import {
+  AutomationRunRequestSchema,
+  ErrorCodes,
+  PromptTemplateSchema,
+  ReviewFileRequestSchema,
+  RunTaskRequestSchema
+} from "../src/index.js";
 
 describe("core schemas", () => {
   test("valid RunTaskRequest parses and defaults mode, timeout, and maxOutputBytes", () => {
@@ -45,6 +51,53 @@ describe("core schemas", () => {
 
     expect(parsed.reviewStyle).toBe("full");
     expect(parsed.language).toBe("en-US");
+  });
+
+  test("automation run request defaults to fully automatic full review", () => {
+    const parsed = AutomationRunRequestSchema.parse({
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    });
+
+    expect(parsed.reviewStyle).toBe("full");
+    expect(parsed.fullyAuto).toBe(true);
+    expect(parsed.timeoutMs).toBe(600000);
+    expect(parsed.maxOutputBytes).toBe(131072);
+  });
+
+  test("prompt template schema requires known template kind", () => {
+    expect(
+      PromptTemplateSchema.parse({
+        id: "template-1",
+        kind: "codex-edit",
+        name: "Codex edit",
+        description: "Edit with merged review packet",
+        version: 1,
+        content: "Read {reviewPacket}",
+        requiredVariables: ["reviewPacket"],
+        isDefault: true,
+        createdAt: "2026-06-08T10:00:00.000Z",
+        updatedAt: "2026-06-08T10:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "codex-edit" });
+
+    expect(() =>
+      PromptTemplateSchema.parse({
+        id: "bad",
+        kind: "unknown",
+        name: "Bad",
+        description: "Bad",
+        version: 1,
+        content: "Bad",
+        requiredVariables: [],
+        isDefault: false,
+        createdAt: "2026-06-08T10:00:00.000Z",
+        updatedAt: "2026-06-08T10:00:00.000Z"
+      })
+    ).toThrow();
   });
 
   test("defines error codes referenced by implementation tasks", () => {

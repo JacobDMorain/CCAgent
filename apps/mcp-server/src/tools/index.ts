@@ -3,6 +3,7 @@ export * from "./getTaskStatus.js";
 export * from "./listProviders.js";
 export * from "./readTaskOutput.js";
 export * from "./reviewFile.js";
+export * from "./reviewBatch.js";
 export * from "./runTask.js";
 export * from "./testProvider.js";
 export * from "./types.js";

@@ -52,10 +52,18 @@ export function runCodexMcpAcceptance(options: CodexMcpAcceptanceOptions): Codex
     if (!blockText.includes(expectedEntry)) {
       throw new Error("ccagent MCP server args do not point at the built MCP server entrypoint");
     }
+    if (!/\bcwd\s*=/.test(blockText) || !blockText.includes(options.root.replaceAll("\\", "/"))) {
+      throw new Error("ccagent MCP server cwd does not point at the CCAgent workspace");
+    }
+    if (!blockText.includes("CCAGENT_LOCAL_CONFIG_PATH")) {
+      throw new Error("ccagent MCP server config does not name CCAGENT_LOCAL_CONFIG_PATH");
+    }
 
     evidence.push("Codex config contains a ccagent MCP server block");
     evidence.push("ccagent MCP command is node");
     evidence.push("ccagent MCP args point at apps/mcp-server/dist/apps/mcp-server/src/index.js");
+    evidence.push("ccagent MCP cwd points at the CCAgent workspace");
+    evidence.push("ccagent MCP config names CCAGENT_LOCAL_CONFIG_PATH for runtime provider sync");
     if (blockText.includes("CCAGENT_DAEMON_URL")) {
       evidence.push("ccagent MCP config names CCAGENT_DAEMON_URL");
     }

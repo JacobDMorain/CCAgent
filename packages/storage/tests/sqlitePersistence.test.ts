@@ -5,7 +5,10 @@ import { afterEach, describe, expect, test } from "vitest";
 import { createBuiltInProviders } from "@ccagent/provider";
 import {
   createDatabase,
+  SqliteAutomationRunStore,
   SqliteProviderStore,
+  SqlitePromptTemplateStore,
+  SqliteReviewBatchStore,
   SqliteSettingsStore,
   SqliteTaskStore
 } from "../src/index.js";
@@ -25,6 +28,9 @@ describe("SQLite persistence", () => {
     const providers = new SqliteProviderStore(first);
     const settings = new SqliteSettingsStore(first);
     const tasks = new SqliteTaskStore(first);
+    const batches = new SqliteReviewBatchStore(first);
+    const templates = new SqlitePromptTemplateStore(first);
+    const runs = new SqliteAutomationRunStore(first);
 
     providers.saveProvider(createBuiltInProviders().glm);
     settings.set("daemon", { port: 47621 });
@@ -44,12 +50,60 @@ describe("SQLite persistence", () => {
       durationMs: 1000
     });
     tasks.appendLog("task_persist", "stdout", "persisted log");
+    batches.createBatch({
+      id: "batch_persist",
+      cwd: "D:/project",
+      file: "test.md",
+      reviewStyle: "bugs",
+      startedAt: "2026-06-08T10:00:00.000Z",
+      tasks: [{ provider: "glm", model: "glm-5.1", taskId: "task_persist", position: 0 }]
+    });
+    templates.saveTemplate({
+      id: "template_persist",
+      kind: "codex-edit",
+      name: "Persisted template",
+      description: "Persisted template",
+      version: 1,
+      content: "Read {reviewPacket}",
+      requiredVariables: ["reviewPacket"],
+      isDefault: true,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+    runs.createRun({
+      id: "run_persist",
+      status: "done",
+      cwd: "D:/project",
+      file: "test.md",
+      reviewStyle: "full",
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit",
+      fullyAuto: true,
+      outputDir: "D:/project/.ccagent/runs/run_persist",
+      reviewPacketPath: "D:/project/.ccagent/runs/run_persist/review-packet.md",
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:01.000Z",
+      finishedAt: "2026-06-08T10:00:01.000Z",
+      providers: [
+        {
+          runId: "run_persist",
+          provider: "glm",
+          model: "glm-5.1",
+          taskId: "task_persist",
+          status: "succeeded",
+          position: 0
+        }
+      ]
+    });
     first.close();
 
     const second = createDatabase(dbPath);
     const reopenedProviders = new SqliteProviderStore(second);
     const reopenedSettings = new SqliteSettingsStore(second);
     const reopenedTasks = new SqliteTaskStore(second);
+    const reopenedBatches = new SqliteReviewBatchStore(second);
+    const reopenedTemplates = new SqlitePromptTemplateStore(second);
+    const reopenedRuns = new SqliteAutomationRunStore(second);
 
     expect(reopenedProviders.getProvider("glm")).toMatchObject({ id: "glm" });
     expect(reopenedSettings.get<{ port: number }>("daemon")).toEqual({ port: 47621 });
@@ -58,6 +112,20 @@ describe("SQLite persistence", () => {
       content: "persisted output"
     });
     expect(reopenedTasks.readLogs("task_persist", 1000).content).toContain("persisted log");
+    expect(reopenedBatches.getBatch("batch_persist")).toMatchObject({
+      id: "batch_persist",
+      file: "test.md",
+      tasks: [{ provider: "glm", model: "glm-5.1", taskId: "task_persist", position: 0 }]
+    });
+    expect(reopenedTemplates.getTemplate("template_persist")).toMatchObject({
+      id: "template_persist",
+      requiredVariables: ["reviewPacket"]
+    });
+    expect(reopenedRuns.getRun("run_persist")).toMatchObject({
+      id: "run_persist",
+      status: "done",
+      providers: [{ provider: "glm", taskId: "task_persist", status: "succeeded" }]
+    });
     second.close();
   });
 });

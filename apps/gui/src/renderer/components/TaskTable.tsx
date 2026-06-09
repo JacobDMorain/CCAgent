@@ -3,11 +3,12 @@ import { parseErrorMessage } from "../guiLogic.js";
 
 export interface TaskTableProps {
   tasks: GuiTaskRecord[];
+  selectedOutputTaskId?: string;
   onCancel?(taskId: string): void | Promise<void>;
   onReadOutput?(taskId: string): void | Promise<void>;
 }
 
-export function TaskTable({ tasks, onCancel, onReadOutput }: TaskTableProps) {
+export function TaskTable({ tasks, selectedOutputTaskId, onCancel, onReadOutput }: TaskTableProps) {
   return (
     <table className="task-table">
       <thead>
@@ -49,7 +50,7 @@ export function TaskTable({ tasks, onCancel, onReadOutput }: TaskTableProps) {
               </td>
               <td>
                 <button type="button" onClick={() => void onReadOutput?.(task.id)}>
-                  View output
+                  {selectedOutputTaskId === task.id ? "Hide" : "Read"}
                 </button>
               </td>
             </tr>

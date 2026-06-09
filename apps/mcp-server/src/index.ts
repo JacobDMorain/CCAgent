@@ -9,6 +9,9 @@ import {
   getTaskStatusTool,
   listProvidersTool,
   readTaskOutputTool,
+  getReviewBatchStatusTool,
+  readReviewBatchOutputTool,
+  reviewFileMultiTool,
   reviewFileTool,
   runTaskTool,
   testProviderTool
@@ -27,6 +30,9 @@ export function createMcpTools(daemon: DaemonClientLike): Record<string, McpTool
     testProviderTool(daemon),
     runTaskTool(daemon),
     reviewFileTool(daemon),
+    reviewFileMultiTool(daemon),
+    getReviewBatchStatusTool(daemon),
+    readReviewBatchOutputTool(daemon),
     getTaskStatusTool(daemon),
     readTaskOutputTool(daemon),
     cancelTaskTool(daemon)
@@ -84,6 +90,23 @@ export function createDaemonClientFromEnv(env: NodeJS.ProcessEnv = process.env):
   });
 }
 
+export async function syncLocalConfigFromEnv(
+  daemon: DaemonClientLike,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const localConfigPath = env.CCAGENT_LOCAL_CONFIG_PATH?.trim();
+  if (!localConfigPath) {
+    return;
+  }
+  try {
+    await daemon.post("/providers/sync-local-config", { path: localConfigPath });
+  } catch (error) {
+    console.error(
+      `CCAgent local config sync skipped during MCP startup: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 function readDaemonToken(ref: string): string {
   try {
     return new DpapiStore().getSync(ref);
@@ -95,6 +118,7 @@ function readDaemonToken(ref: string): string {
 export async function startStdioServer(
   daemon: DaemonClientLike = createDaemonClientFromEnv()
 ): Promise<void> {
+  await syncLocalConfigFromEnv(daemon);
   const server = createMcpServer(daemon);
   await server.connect(new StdioServerTransport());
 }

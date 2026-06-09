@@ -28,6 +28,8 @@ export function registerCodexMcp(options: RegisterCodexMcpOptions): RegisterCode
     "src",
     "index.js"
   ).replaceAll("\\", "/");
+  const cwd = options.root.replaceAll("\\", "/");
+  const localConfigPath = join(options.root, "ccagent.local-config.md").replaceAll("\\", "/");
   const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const backupPath = existsSync(configPath)
     ? `${configPath}.bak-ccagent-${now().replace(/[:.]/g, "-")}`
@@ -41,6 +43,10 @@ export function registerCodexMcp(options: RegisterCodexMcpOptions): RegisterCode
 [mcp_servers.ccagent]
 command = "node"
 args = ["${entrypoint}"]
+cwd = "${cwd}"
+
+[mcp_servers.ccagent.env]
+CCAGENT_LOCAL_CONFIG_PATH = "${localConfigPath}"
 `;
 
   mkdirSync(dirname(configPath), { recursive: true });

@@ -1,24 +1,21 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DaemonClient } from "@ccagent/daemon-client";
-import { createDaemon } from "@ccagent/daemon";
+import { createDaemon, loadLocalDaemonConnection } from "@ccagent/daemon";
 import { createGuiApiHandlers, type GuiApiHandlers } from "./ipcHandlers.js";
 
 let mainWindow: BrowserWindow | undefined;
 let handlers: GuiApiHandlers | undefined;
+let daemonStartup: Promise<void> | undefined;
+let daemonStartupError: Error | undefined;
 
 export async function startGui(): Promise<void> {
-  const daemonOverride = getDaemonOverride();
-  const daemon =
-    daemonOverride
-      ? undefined
-      : await createDaemon();
-  const client = new DaemonClient({
-    baseUrl: daemonOverride?.baseUrl ?? daemon!.baseUrl,
-    token: daemonOverride?.token ?? daemon!.authToken
+  registerIpcHandlers(createPendingGuiApiHandlers());
+  daemonStartup = initializeDaemon().catch((error: unknown) => {
+    daemonStartupError = toError(error);
+    console.error(daemonStartupError);
   });
-  handlers = createGuiApiHandlers(client);
-  registerIpcHandlers(handlers);
 
   await app.whenReady();
   mainWindow = new BrowserWindow({
@@ -34,6 +31,100 @@ export async function startGui(): Promise<void> {
   });
 
   await mainWindow.loadFile(fileURLToPath(new URL("../renderer/index.html", import.meta.url)));
+}
+
+async function initializeDaemon(): Promise<void> {
+  const daemonOverride = getDaemonOverride();
+  if (daemonOverride) {
+    handlers = createGuiApiHandlers(new DaemonClient(daemonOverride));
+    return;
+  }
+
+  const existingClient = await connectExistingDaemon();
+  if (existingClient) {
+    handlers = createGuiApiHandlers(existingClient);
+    return;
+  }
+
+  const daemon = await createDaemonWithFallbackPort();
+  const client = new DaemonClient({
+    baseUrl: daemon.baseUrl,
+    token: daemon.authToken
+  });
+  handlers = createGuiApiHandlers(client);
+}
+
+async function createDaemonWithFallbackPort() {
+  try {
+    return await createDaemon();
+  } catch (error) {
+    if (isAddressInUseError(error)) {
+      return createDaemon({ port: 0 });
+    }
+    throw error;
+  }
+}
+
+async function connectExistingDaemon(): Promise<DaemonClient | undefined> {
+  const connection = await loadLocalDaemonConnection();
+  if (!connection) {
+    return undefined;
+  }
+
+  const client = new DaemonClient(connection);
+
+  try {
+    await client.get("/settings/runtime");
+    return client;
+  } catch {
+    return undefined;
+  }
+}
+
+function createPendingGuiApiHandlers(): GuiApiHandlers {
+  const getHandlers = async (): Promise<GuiApiHandlers> => {
+    await daemonStartup;
+    if (handlers) {
+      return handlers;
+    }
+    const error = daemonStartupError ?? new Error("CCAgent daemon is still starting.");
+    error.name = daemonStartupError ? "DAEMON_UNAVAILABLE" : "DAEMON_STARTING";
+    throw error;
+  };
+
+  return {
+    listProviders: async () => (await getHandlers()).listProviders(),
+    saveProvider: async (provider, apiKey) => (await getHandlers()).saveProvider(provider, apiKey),
+    deleteProvider: async (providerId) => (await getHandlers()).deleteProvider(providerId),
+    testProvider: async (provider, model) => (await getHandlers()).testProvider(provider, model),
+    listTasks: async () => (await getHandlers()).listTasks(),
+    clearTasks: async () => (await getHandlers()).clearTasks(),
+    cancelTask: async (taskId) => (await getHandlers()).cancelTask(taskId),
+    readTaskOutput: async (taskId) => (await getHandlers()).readTaskOutput(taskId),
+    createAutomationRun: async (request) => (await getHandlers()).createAutomationRun(request),
+    listAutomationRuns: async () => (await getHandlers()).listAutomationRuns(),
+    getAutomationRun: async (runId) => (await getHandlers()).getAutomationRun(runId),
+    readAutomationRunOutput: async (runId) => (await getHandlers()).readAutomationRunOutput(runId),
+    deleteAutomationRun: async (runId) => (await getHandlers()).deleteAutomationRun(runId),
+    cancelAutomationRun: async (runId) => (await getHandlers()).cancelAutomationRun(runId),
+    retryAutomationRun: async (runId) => (await getHandlers()).retryAutomationRun(runId),
+    rerunCodexEdit: async (runId) => (await getHandlers()).rerunCodexEdit(runId),
+    listPromptTemplates: async () => (await getHandlers()).listPromptTemplates(),
+    savePromptTemplate: async (template) => (await getHandlers()).savePromptTemplate(template),
+    deletePromptTemplate: async (templateId) => (await getHandlers()).deletePromptTemplate(templateId),
+    getRuntimeSettings: async () => (await getHandlers()).getRuntimeSettings(),
+    saveRuntimeSettings: async (settings) => (await getHandlers()).saveRuntimeSettings(settings),
+    testCodex: async () => (await getHandlers()).testCodex(),
+    setWorkspaceRoots: async (allowedRoots) => (await getHandlers()).setWorkspaceRoots(allowedRoots)
+  };
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function isAddressInUseError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
 }
 
 function getDaemonOverride(): { baseUrl: string; token: string } | undefined {
@@ -56,20 +147,60 @@ export function registerIpcHandlers(api: GuiApiHandlers): void {
   ipcMain.handle("ccagent:saveProvider", (_event, provider, apiKey) =>
     api.saveProvider(provider, apiKey)
   );
+  ipcMain.handle("ccagent:deleteProvider", (_event, providerId) =>
+    api.deleteProvider(providerId)
+  );
   ipcMain.handle("ccagent:testProvider", (_event, provider, model) =>
     api.testProvider(provider, model)
   );
   ipcMain.handle("ccagent:listTasks", () => api.listTasks());
+  ipcMain.handle("ccagent:clearTasks", () => api.clearTasks());
   ipcMain.handle("ccagent:cancelTask", (_event, taskId) => api.cancelTask(taskId));
   ipcMain.handle("ccagent:readTaskOutput", (_event, taskId) => api.readTaskOutput(taskId));
+  ipcMain.handle("ccagent:createAutomationRun", (_event, request) =>
+    api.createAutomationRun(request)
+  );
+  ipcMain.handle("ccagent:listAutomationRuns", () => api.listAutomationRuns());
+  ipcMain.handle("ccagent:getAutomationRun", (_event, runId) => api.getAutomationRun(runId));
+  ipcMain.handle("ccagent:readAutomationRunOutput", (_event, runId) =>
+    api.readAutomationRunOutput(runId)
+  );
+  ipcMain.handle("ccagent:deleteAutomationRun", (_event, runId) =>
+    api.deleteAutomationRun(runId)
+  );
+  ipcMain.handle("ccagent:cancelAutomationRun", (_event, runId) =>
+    api.cancelAutomationRun(runId)
+  );
+  ipcMain.handle("ccagent:retryAutomationRun", (_event, runId) =>
+    api.retryAutomationRun(runId)
+  );
+  ipcMain.handle("ccagent:rerunCodexEdit", (_event, runId) => api.rerunCodexEdit(runId));
+  ipcMain.handle("ccagent:listPromptTemplates", () => api.listPromptTemplates());
+  ipcMain.handle("ccagent:savePromptTemplate", (_event, template) =>
+    api.savePromptTemplate(template)
+  );
+  ipcMain.handle("ccagent:deletePromptTemplate", (_event, templateId) =>
+    api.deletePromptTemplate(templateId)
+  );
+  ipcMain.handle("ccagent:getRuntimeSettings", () => api.getRuntimeSettings());
+  ipcMain.handle("ccagent:saveRuntimeSettings", (_event, settings) =>
+    api.saveRuntimeSettings(settings)
+  );
+  ipcMain.handle("ccagent:testCodex", () => api.testCodex());
   ipcMain.handle("ccagent:setWorkspaceRoots", (_event, allowedRoots) =>
     api.setWorkspaceRoots(allowedRoots)
   );
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isMainEntry()) {
   startGui().catch((error) => {
     console.error(error);
     app.exit(1);
   });
+}
+
+function isMainEntry(): boolean {
+  return process.argv[1]
+    ? import.meta.url === new URL(`file://${resolve(process.argv[1])}`).href
+    : false;
 }

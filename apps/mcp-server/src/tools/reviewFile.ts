@@ -14,7 +14,7 @@ export function reviewFileTool(daemon: DaemonClientLike): McpToolDefinition {
         cwd: request.cwd,
         prompt: buildReviewFilePrompt(request),
         files: [request.file],
-        mode: "sync",
+        mode: request.mode,
         timeoutMs: request.timeoutMs,
         maxOutputBytes: request.maxOutputBytes
       });

@@ -23,7 +23,11 @@ describe("register Codex MCP", () => {
     expect(text).toContain("[mcp_servers.figma]");
     expect(text).toContain("[mcp_servers.ccagent]");
     expect(text).toContain('command = "node"');
+    expect(text).toContain(`cwd = "${root.replaceAll("\\", "/")}"`);
     expect(text).toContain("apps/mcp-server/dist/apps/mcp-server/src/index.js");
+    expect(text).toContain("[mcp_servers.ccagent.env]");
+    expect(text).toContain("CCAGENT_LOCAL_CONFIG_PATH");
+    expect(text).toContain("ccagent.local-config.md");
     expect(text).not.toContain("CCAGENT_DAEMON_TOKEN");
     expect(text).not.toContain("ccagent_");
   });

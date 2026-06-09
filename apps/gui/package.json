@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.main.json && vite build --config vite.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit",
-    "dev": "tsx src/main/index.ts",
+    "dev": "pnpm build && electron dist/main/index.js",
     "smoke": "playwright test tests/electron-smoke.spec.ts",
     "smoke:dashboard": "playwright test tests/electron-dashboard.spec.ts"
   },

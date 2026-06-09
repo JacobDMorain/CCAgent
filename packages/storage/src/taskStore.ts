@@ -165,6 +165,17 @@ export class SqliteTaskStore {
 
     return [...this.database.tasks.values()].slice(0, limit).map(rowToRecord);
   }
+
+  clearTasks(): void {
+    if (this.database.kind === "sqlite") {
+      this.database.handle.prepare("DELETE FROM task_logs").run();
+      this.database.handle.prepare("DELETE FROM tasks").run();
+      return;
+    }
+
+    this.database.logs.length = 0;
+    this.database.tasks.clear();
+  }
 }
 
 interface SqliteTaskRow {

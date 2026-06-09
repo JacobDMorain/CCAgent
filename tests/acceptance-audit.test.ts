@@ -80,6 +80,31 @@ describe("acceptance audit", () => {
       "missing: manual evidence glm-real-provider evidence contains secret-like text"
     );
   });
+
+  test("records local allowed roots and provider consent without exposing secrets", () => {
+    const workspace = copyManualEvidenceFixtureRoot(process.cwd());
+    writeFileSync(
+      join(workspace, "ccagent.local-config.md"),
+      [
+        "# local",
+        "```dotenv",
+        "GLM_API_KEY=sk-secret-value-should-not-appear",
+        "CCAGENT_ALLOWED_ROOTS=D:/CodeAnalyze;D:/AnotherProject",
+        "CCAGENT_EXTERNAL_PROVIDER_CONSENT=glm:D:/CodeAnalyze;deepseek:D:/AnotherProject",
+        "```"
+      ].join("\n")
+    );
+
+    const audit = buildAcceptanceAudit(workspace, "2026-06-05T08:01:00.000Z");
+    const item = audit.items.find((entry) => entry.id === "local-egress-policy");
+
+    expect(item).toMatchObject({ status: "automated" });
+    expect(item?.evidence).toContain("local-config: allowedRoots=D:/CodeAnalyze;D:/AnotherProject");
+    expect(item?.evidence).toContain(
+      "local-config: externalProviderConsent=glm:D:/CodeAnalyze;deepseek:D:/AnotherProject"
+    );
+    expect(JSON.stringify(item)).not.toContain("sk-secret-value-should-not-appear");
+  });
 });
 
 function copyManualEvidenceFixtureRoot(sourceRoot: string): string {
@@ -87,19 +112,24 @@ function copyManualEvidenceFixtureRoot(sourceRoot: string): string {
   mkdirSync(join(workspace, "dist", "acceptance"), { recursive: true });
   for (const path of [
     "apps/daemon/src/index.ts",
+    "apps/daemon/src/automationManager.ts",
     "apps/daemon/src/taskManager.ts",
     "apps/daemon/tests/daemon-api.test.ts",
     "apps/gui/src/renderer/App.tsx",
     "apps/gui/src/renderer/components/TaskTable.tsx",
+    "apps/gui/src/renderer/routes/ReviewWorkspacePage.tsx",
+    "apps/gui/src/renderer/routes/RunsPage.tsx",
     "apps/gui/tests/electron-dashboard.spec.ts",
     "apps/gui/tests/electron-smoke.spec.ts",
     "apps/gui/tests/gui-renderer.test.tsx",
     "docs/codex-mcp-setup.md",
+    "docs/local-secrets.md",
     "docs/provider-config.md",
     "docs/release-checklist.md",
     "packages/secrets/tests/secretStore.test.ts",
     "packages/core/tests/pathPolicy.test.ts",
     "packages/provider/src/providerConfig.ts",
+    "packages/provider/tests/providerRegistry.test.ts",
     "packages/proxy/tests/portAllocator.test.ts",
     "package.json",
     "tests/e2e/concurrent-providers.test.ts",

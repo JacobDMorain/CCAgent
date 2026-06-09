@@ -1,5 +1,6 @@
 export * from "./config.js";
 export * from "./httpServer.js";
+export * from "./localConnection.js";
 export * from "./taskManager.js";
 
 import { createDaemon, type StartedDaemon } from "./httpServer.js";

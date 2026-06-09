@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import process from "node:process";
 import { createBuiltInProviders } from "@ccagent/provider";
 import { DaemonClient } from "@ccagent/daemon-client";
 import { createDatabase, SqliteTaskStore } from "@ccagent/storage";
@@ -97,6 +98,117 @@ describe("daemon API", () => {
     await expect(client.get("/providers")).resolves.toEqual([]);
   });
 
+  test("startup syncs local operator provider config and secrets", async () => {
+    const root = join(tmpdir(), `ccagent-local-config-${Date.now()}-${Math.random()}`);
+    const localConfigPath = join(root, "ccagent.local-config.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      localConfigPath,
+      [
+        "# Local CCAgent config",
+        "```dotenv",
+        "GLM_API_KEY=sk-local-glm-secret",
+        "DEEPSEEK_API_KEY=sk-local-deepseek-secret",
+        "GLM_BASE_URL=https://ark.example.test/glm/v1",
+        "DEEPSEEK_BASE_URL=https://deepseek.example.test",
+        "```"
+      ].join("\n")
+    );
+    const secretStore = new MemorySecretStore();
+
+    const daemon = await startDaemon({
+      port: 0,
+      localConfigPath,
+      secretStore
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    const providers = (await client.get("/providers")) as any[];
+
+    expect(providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "glm",
+          baseUrl: "https://ark.example.test/glm/v1"
+        }),
+        expect.objectContaining({
+          id: "deepseek",
+          baseUrl: "https://deepseek.example.test"
+        })
+      ])
+    );
+    await expect(secretStore.get("providers/glm/api-key")).resolves.toBe("sk-local-glm-secret");
+    await expect(secretStore.get("providers/deepseek/api-key")).resolves.toBe(
+      "sk-local-deepseek-secret"
+    );
+  });
+
+  test("sync-local-config endpoint applies operator config to a running daemon", async () => {
+    const root = join(tmpdir(), `ccagent-local-config-endpoint-${Date.now()}-${Math.random()}`);
+    const localConfigPath = join(root, "ccagent.local-config.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      localConfigPath,
+      [
+        "# Local CCAgent config",
+        "GLM_API_KEY=sk-endpoint-glm-secret",
+        "GLM_BASE_URL=https://ark.example.test/runtime/v1"
+      ].join("\n")
+    );
+    const secretStore = new MemorySecretStore();
+    const daemon = await startDaemon({ port: 0, secretStore });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    await expect(
+      client.post("/providers/sync-local-config", { path: localConfigPath })
+    ).resolves.toMatchObject({
+      synced: true,
+      providers: ["glm", "deepseek"]
+    });
+    const providers = (await client.get("/providers")) as any[];
+
+    expect(providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "glm",
+          baseUrl: "https://ark.example.test/runtime/v1"
+        })
+      ])
+    );
+    await expect(secretStore.get("providers/glm/api-key")).resolves.toBe("sk-endpoint-glm-secret");
+  });
+
+  test("sync-local-config endpoint persists allowed roots from local operator config", async () => {
+    const root = join(tmpdir(), `ccagent-local-config-roots-${Date.now()}-${Math.random()}`);
+    const localConfigPath = join(root, "ccagent.local-config.md");
+    const configPath = join(root, "config.json");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      localConfigPath,
+      [
+        "# Local CCAgent config",
+        "```dotenv",
+        "CCAGENT_ALLOWED_ROOTS=D:/CodeAnalyze; D:/Project With Spaces",
+        "```"
+      ].join("\n")
+    );
+    const daemon = await startDaemon({ port: 0, configPath });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    await expect(
+      client.post("/providers/sync-local-config", { path: localConfigPath })
+    ).resolves.toMatchObject({
+      synced: true,
+      allowedRoots: ["D:/CodeAnalyze", "D:/Project With Spaces"]
+    });
+
+    const saved = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(saved.workspace.allowedRoots).toEqual(["D:/CodeAnalyze", "D:/Project With Spaces"]);
+  });
+
   test("POST /tasks stores runner output and logs", async () => {
     const daemon = await startDaemon({
       port: 0,
@@ -159,8 +271,15 @@ describe("daemon API", () => {
     ).rejects.toMatchObject({ code: "CCAGENT_TASK_LIMIT" });
   });
 
-  test("provider secret and provider test endpoints work", async () => {
-    const daemon = await startDaemon({ port: 0 });
+  test("provider test stores secrets and performs a lightweight upstream probe", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const daemon = await startDaemon({
+      port: 0,
+      providerTestFetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200 });
+      }
+    });
     daemons.push(daemon);
     const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
     await client.post("/providers", createBuiltInProviders().glm);
@@ -169,7 +288,53 @@ describe("daemon API", () => {
       client.post("/providers/glm/secret", { value: "sk-testabcd" })
     ).resolves.toMatchObject({ fingerprint: "sk-...abcd" });
     await expect(client.post("/providers/test", { provider: "glm" })).resolves.toMatchObject({
-      status: "ok"
+      status: "ok",
+      model: "glm-5.1"
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`${createBuiltInProviders().glm.baseUrl}/chat/completions`);
+    expect(calls[0].init?.headers).toMatchObject({
+      Authorization: "Bearer sk-testabcd"
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      model: "glm-5.1",
+      max_tokens: 1
+    });
+  });
+
+  test("provider test uses Anthropic messages endpoint for anthropic-compatible providers", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const daemon = await startDaemon({
+      port: 0,
+      providerTestFetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response(JSON.stringify({ id: "msg-test" }), { status: 200 });
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", {
+      ...createBuiltInProviders().deepseek,
+      mode: "anthropic-compatible",
+      baseUrl: "https://api.deepseek.com/anthropic",
+      auth: { header: "x-api-key", scheme: "Bearer" },
+      models: { default: "deepseek-v4-pro[1m]", review: "deepseek-v4-pro[1m]" }
+    });
+    await client.post("/providers/deepseek/secret", { value: "sk-deepseek" });
+
+    await expect(client.post("/providers/test", { provider: "deepseek" })).resolves.toMatchObject({
+      status: "ok",
+      model: "deepseek-v4-pro[1m]"
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.deepseek.com/anthropic/v1/messages");
+    expect(calls[0].init?.headers).toMatchObject({
+      "x-api-key": "sk-deepseek",
+      "anthropic-version": "2023-06-01"
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      model: "deepseek-v4-pro[1m]",
+      max_tokens: 1
     });
   });
 
@@ -181,6 +346,42 @@ describe("daemon API", () => {
     await expect(
       client.post("/settings/workspace-roots", { allowedRoots: ["D:/project"] })
     ).resolves.toEqual({ allowedRoots: ["D:/project"] });
+  });
+
+  test("runtime settings endpoint updates Claude and Codex CLI paths", async () => {
+    const daemon = await startDaemon({ port: 0 });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    await expect(client.get("/settings/runtime")).resolves.toMatchObject({
+      claudePath: "claude",
+      codexPath: "codex.cmd"
+    });
+    await expect(
+      client.post("/settings/runtime", {
+        claudePath: "custom-claude.cmd",
+        codexPath: "custom-codex.cmd"
+      })
+    ).resolves.toMatchObject({
+      claudePath: "custom-claude.cmd",
+      codexPath: "custom-codex.cmd"
+    });
+  });
+
+  test("codex test endpoint checks configured Codex CLI path", async () => {
+    const daemon = await startDaemon({
+      port: 0,
+      settings: {
+        codex: { path: process.execPath }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    await expect(client.post("/settings/codex/test")).resolves.toMatchObject({
+      status: "ok",
+      codexPath: process.execPath
+    });
   });
 
   test("workspace root settings persist through config file across daemon restarts", async () => {
@@ -621,6 +822,610 @@ describe("daemon API", () => {
       expect.objectContaining({ id: "task_list" })
     ]);
   });
+
+  test("POST /review-batches starts async review tasks and returns persisted batch status", async () => {
+    const runnerStarted: string[] = [];
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: ["D:/project"] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async (input) => {
+          runnerStarted.push(input.taskId);
+          return { content: `review for ${input.taskId}`, raw: "{}" };
+        },
+        allocatePort: async () => ({ port: 41005, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+    await client.post("/providers", { ...createBuiltInProviders().deepseek, baseUrl: "https://deepseek.example" });
+    await client.post("/providers/deepseek/secret", { value: "sk-provider-2" });
+
+    const batch = (await client.post("/review-batches", {
+      cwd: "D:/project",
+      file: "test.md",
+      reviewStyle: "bugs",
+      reviewers: [{ provider: "glm" }, { provider: "deepseek" }]
+    })) as any;
+
+    expect(batch).toMatchObject({
+      status: "running",
+      batchId: expect.stringMatching(/^batch_/),
+      tasks: [
+        { provider: "glm", taskId: expect.stringMatching(/^task_/) },
+        { provider: "deepseek", taskId: expect.stringMatching(/^task_/) }
+      ]
+    });
+    await waitFor(async () => runnerStarted.length === 2);
+    await expect(client.get(`/review-batches/${batch.batchId}`)).resolves.toMatchObject({
+      status: "ok",
+      batchId: batch.batchId,
+      tasks: [
+        { provider: "glm", status: "ok" },
+        { provider: "deepseek", status: "ok" }
+      ]
+    });
+  });
+
+  test("review batch status and output survive daemon restart", async () => {
+    const databasePath = join(tmpdir(), `ccagent-batches-${Date.now()}.sqlite`);
+    const secretStore = new MemorySecretStore();
+    const configPath = join(tmpdir(), `ccagent-batches-${Date.now()}.json`);
+    let second: Awaited<ReturnType<typeof startDaemon>> | undefined;
+
+    try {
+      const first = await startDaemon({
+        port: 0,
+        databasePath,
+        configPath,
+        secretStore,
+        settings: { workspace: { allowedRoots: ["D:/project"] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async (input) => ({ content: `persisted review ${input.taskId}`, raw: "{}" }),
+          allocatePort: async () => ({ port: 41006, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        }
+      });
+      daemons.push(first);
+      const firstClient = new DaemonClient({ baseUrl: first.baseUrl, token: first.authToken });
+      await firstClient.post("/providers", createBuiltInProviders().glm);
+      await firstClient.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const batch = (await firstClient.post("/review-batches", {
+        cwd: "D:/project",
+        file: "test.md",
+        reviewers: [{ provider: "glm", model: "glm-5.1" }]
+      })) as any;
+      await waitFor(async () => {
+        const status = (await firstClient.get(`/review-batches/${batch.batchId}`)) as any;
+        return status.status === "ok";
+      });
+      await first.stop();
+      daemons.splice(daemons.indexOf(first), 1);
+
+      second = await startDaemon({
+        port: 0,
+        databasePath,
+        configPath,
+        secretStore
+      });
+      daemons.push(second);
+      const secondClient = new DaemonClient({ baseUrl: second.baseUrl, token: second.authToken });
+
+      await expect(secondClient.get(`/review-batches/${batch.batchId}`)).resolves.toMatchObject({
+        status: "ok",
+        batchId: batch.batchId,
+        tasks: [{ provider: "glm", model: "glm-5.1", status: "ok" }]
+      });
+      await expect(
+        secondClient.get(`/review-batches/${batch.batchId}/output?maxBytes=1000`)
+      ).resolves.toMatchObject({
+        status: "ok",
+        reviews: [
+          {
+            provider: "glm",
+            model: "glm-5.1",
+            status: "ok",
+            content: expect.stringContaining("persisted review")
+          }
+        ]
+      });
+    } finally {
+      if (second) {
+        await second.stop();
+        daemons.splice(daemons.indexOf(second), 1);
+      }
+      rmSync(configPath, { force: true });
+      rmSync(databasePath, { force: true });
+      rmSync(`${databasePath}-shm`, { force: true });
+      rmSync(`${databasePath}-wal`, { force: true });
+    }
+  });
+
+  test("prompt template API exposes seeded defaults and CRUD", async () => {
+    const daemon = await startDaemon({ port: 0 });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    const defaults = (await client.get("/prompt-templates")) as any[];
+    expect(defaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "default-claude-review-full", kind: "claude-review" }),
+        expect.objectContaining({ id: "default-codex-edit", kind: "codex-edit" })
+      ])
+    );
+
+    await expect(
+      client.post("/prompt-templates", {
+        id: "custom-codex",
+        kind: "codex-edit",
+        name: "Custom Codex",
+        description: "Custom Codex edit template",
+        version: 1,
+        content: "Read {reviewPacket}",
+        requiredVariables: ["reviewPacket"],
+        isDefault: false,
+        createdAt: "2026-06-08T10:00:00.000Z",
+        updatedAt: "2026-06-08T10:00:00.000Z"
+      })
+    ).resolves.toMatchObject({ id: "custom-codex" });
+
+    await expect(client.delete("/prompt-templates/custom-codex")).resolves.toEqual({ ok: true });
+  });
+
+  test("startup upgrades older built-in default prompt templates without overwriting custom templates", async () => {
+    const databasePath = join(tmpdir(), `ccagent-template-upgrade-${Date.now()}-${Math.random()}.sqlite`);
+    const configPath = join(tmpdir(), `ccagent-template-upgrade-${Date.now()}-${Math.random()}.json`);
+    let daemon = await startDaemon({ port: 0, databasePath, configPath });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    await client.post("/prompt-templates", {
+      id: "default-codex-edit",
+      kind: "codex-edit",
+      name: "Old Codex",
+      description: "Old default Codex edit template",
+      version: 1,
+      content: "Old default template {reviewPacket}",
+      requiredVariables: ["reviewPacket"],
+      isDefault: true,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+    await client.post("/prompt-templates", {
+      id: "custom-codex",
+      kind: "codex-edit",
+      name: "Custom Codex",
+      description: "Custom Codex edit template",
+      version: 1,
+      content: "Custom template {reviewPacket}",
+      requiredVariables: ["reviewPacket"],
+      isDefault: false,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+
+    await daemon.stop();
+    daemons.splice(daemons.indexOf(daemon), 1);
+    daemon = await startDaemon({ port: 0, databasePath, configPath });
+    daemons.push(daemon);
+    const restartedClient = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    const templates = (await restartedClient.get("/prompt-templates")) as any[];
+
+    expect(templates.find((template) => template.id === "default-codex-edit")).toMatchObject({
+      version: 2,
+      content: expect.stringContaining("adjudicate the provider review findings")
+    });
+    expect(templates.find((template) => template.id === "custom-codex")).toMatchObject({
+      content: "Custom template {reviewPacket}"
+    });
+
+    await daemon.stop();
+    daemons.splice(daemons.indexOf(daemon), 1);
+    rmSync(configPath, { force: true });
+    rmSync(databasePath, { force: true });
+    rmSync(`${databasePath}-shm`, { force: true });
+    rmSync(`${databasePath}-wal`, { force: true });
+  });
+
+  test("automation run completes multi-provider review, packet generation, and codex edit", async () => {
+    const codexPrompts: string[] = [];
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: ["D:/project"] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async (input) => ({
+          content: `review result for ${input.prompt.includes("Provider: glm") ? "glm" : "deepseek"}`,
+          raw: "{}"
+        }),
+        allocatePort: async () => ({ port: 41007, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      },
+      automationOrchestration: {
+        runCodex: async (input) => {
+          codexPrompts.push(input.prompt);
+          if (codexPrompts.length === 2) {
+            return { exitCode: 0, content: "## Applied\n- User-facing summary only" };
+          }
+          return { exitCode: 0, content: "Codex applied review suggestions" };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+    await client.post("/providers", { ...createBuiltInProviders().deepseek, baseUrl: "https://deepseek.example" });
+    await client.post("/providers/deepseek/secret", { value: "sk-provider-2" });
+
+    const run = (await client.post("/automation-runs", {
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }, { provider: "deepseek" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    })) as any;
+
+    expect(run).toMatchObject({ status: "queued", fullyAuto: true });
+    await waitFor(async () => {
+      const status = (await client.get(`/automation-runs/${run.id}`)) as any;
+      return status.status === "done";
+    });
+
+    const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+    expect(completed).toMatchObject({
+      status: "done",
+      providers: [
+        { provider: "glm", status: "succeeded" },
+        { provider: "deepseek", status: "succeeded" }
+      ],
+      codexTask: { status: "ok" }
+    });
+    expect(completed.reviewPacketPath).toContain("review-packet.md");
+    expect(codexPrompts).toHaveLength(2);
+    expect(codexPrompts[0]).toContain(completed.reviewPacketPath);
+    expect(codexPrompts[0]).toContain("adjudicate the provider review findings");
+    expect(codexPrompts[0]).toContain("Do not replace the target document with a different file");
+    expect(codexPrompts[1]).toContain("codex-decision-summary.md");
+    expect(codexPrompts[1]).toContain("review-packet.md");
+    expect(codexPrompts[1]).toContain("codex-output.md");
+    expect(codexPrompts[1]).toContain("diff.patch");
+
+    await expect(client.get(`/automation-runs/${run.id}/output?maxBytes=5000`)).resolves.toMatchObject({
+      content: expect.stringContaining("## Applied\n- User-facing summary only")
+    });
+  });
+
+  test("automation run sends the full Codex prompt through stdin for Windows command shims", async () => {
+    const root = join(tmpdir(), `ccagent-codex-stdin-${Date.now()}-${Math.random()}`);
+    const capturePath = join(root, "captured-codex.jsonl");
+    const fakeCodexJs = join(root, "fake-codex.js");
+    const fakeCodexCmd = join(root, "fake-codex.cmd");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "test.md"), "# Target\n", "utf8");
+    writeFileSync(
+      fakeCodexJs,
+      [
+        "const fs = require('node:fs');",
+        "let stdin = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+        "process.stdin.on('end', () => {",
+        "  fs.appendFileSync(process.env.CCAGENT_FAKE_CODEX_CAPTURE, JSON.stringify({ argv: process.argv.slice(2), stdin }) + '\\n');",
+        "  process.stdout.write('fake codex completed');",
+        "  process.stderr.write('OpenAI Codex transcript should stay in stderr log');",
+        "});"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      fakeCodexCmd,
+      `@echo off\r\n"${process.execPath}" "${fakeCodexJs}" %*\r\n`,
+      "utf8"
+    );
+    process.env.CCAGENT_FAKE_CODEX_CAPTURE = capturePath;
+    let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
+
+    try {
+      daemon = await startDaemon({
+        port: 0,
+        settings: {
+          workspace: { allowedRoots: [root] },
+          codex: { path: fakeCodexCmd }
+        },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41011, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: join(root, "test.md"),
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        timeoutMs: 5000
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const capturedCalls = readFileSync(capturePath, "utf8")
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line));
+      const captured = capturedCalls[0];
+      const normalizedTarget = join(root, "test.md").replace(/\\/g, "/");
+
+      expect(captured.argv).toContain("-");
+      expect(captured.stdin).toContain("Your job is to adjudicate the provider review findings");
+      expect(captured.stdin).toContain(`Target document: ${normalizedTarget}`);
+      expect(captured.stdin).toContain("Review packet:");
+      expect(capturedCalls[1].stdin).toContain("codex-decision-summary.md");
+      const output = (await client.get(`/automation-runs/${run.id}/output?maxBytes=5000`)) as any;
+      const summarySection = extractRunOutputSection(output.content, "codex-decision-summary.md");
+      expect(summarySection).toBe("fake codex completed");
+      expect(summarySection).not.toContain("OpenAI Codex transcript should stay in stderr log");
+    } finally {
+      delete process.env.CCAGENT_FAKE_CODEX_CAPTURE;
+      if (daemon) {
+        await daemon.stop();
+        daemons.splice(daemons.indexOf(daemon), 1);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run captures target document snapshot diff for untracked target files", async () => {
+    const root = join(tmpdir(), `ccagent-target-diff-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let codexCalls = 0;
+    let summaryPrompt = "";
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Before\n", "utf8");
+    writeFileSync(join(root, "other.md"), "# Existing dirty file\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41012, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async (input) => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# After\n", "utf8");
+              writeFileSync(join(root, "other.md"), "# Existing dirty file changed\n", "utf8");
+              return { exitCode: 0, content: "Edited target" };
+            }
+            summaryPrompt = input.prompt;
+            return { exitCode: 0, content: "summary" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit"
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const output = (await client.get(`/automation-runs/${run.id}/output?maxBytes=10000`)) as any;
+      const diff = extractRunOutputSection(output.content, "diff.patch");
+
+      expect(summaryPrompt).toContain("diff.patch");
+      expect(diff).toContain("Target document snapshot diff");
+      expect(diff).toContain("test.md");
+      expect(diff).toContain("-# Before");
+      expect(diff).toContain("+# After");
+      expect(diff).not.toContain("other.md");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run continues to codex when one provider fails", async () => {
+    let codexCalled = false;
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: ["D:/project"] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async (input) => {
+          if (input.prompt.includes("Provider: deepseek")) {
+            throw new CCAgentError(ErrorCodes.ParseError, "bad provider output");
+          }
+          return { content: "glm review ok", raw: "{}" };
+        },
+        allocatePort: async () => ({ port: 41008, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      },
+      automationOrchestration: {
+        runCodex: async () => {
+          codexCalled = true;
+          return { exitCode: 0, content: "Codex edited despite partial failure" };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+    await client.post("/providers", { ...createBuiltInProviders().deepseek, baseUrl: "https://deepseek.example" });
+    await client.post("/providers/deepseek/secret", { value: "sk-provider-2" });
+
+    const run = (await client.post("/automation-runs", {
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }, { provider: "deepseek" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    })) as any;
+
+    await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+    const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+    expect(codexCalled).toBe(true);
+    expect(completed.providers).toEqual([
+      expect.objectContaining({ provider: "glm", status: "succeeded" }),
+      expect.objectContaining({ provider: "deepseek", status: "failed" })
+    ]);
+  });
+
+  test("automation run fails without codex when all providers fail", async () => {
+    let codexCalled = false;
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: ["D:/project"] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async () => {
+          throw new CCAgentError(ErrorCodes.ParseError, "bad provider output");
+        },
+        allocatePort: async () => ({ port: 41009, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      },
+      automationOrchestration: {
+        runCodex: async () => {
+          codexCalled = true;
+          return { exitCode: 0, content: "unreachable" };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+    const run = (await client.post("/automation-runs", {
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    })) as any;
+
+    await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "failed");
+    const failed = (await client.get(`/automation-runs/${run.id}`)) as any;
+    expect(codexCalled).toBe(false);
+    expect(failed.errorJson).toContain("CCAGENT_AUTOMATION_NO_SUCCESSFUL_REVIEWS");
+  });
+
+  test("automation retry reruns failed providers before rerunning codex", async () => {
+    let deepseekAttempts = 0;
+    let codexCalls = 0;
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: ["D:/project"] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async (input) => {
+          if (input.prompt.includes("Provider: deepseek")) {
+            deepseekAttempts += 1;
+            if (deepseekAttempts === 1) {
+              throw new CCAgentError(ErrorCodes.ParseError, "first deepseek failure");
+            }
+          }
+          return { content: `review ok ${input.taskId}`, raw: "{}" };
+        },
+        allocatePort: async () => ({ port: 41010, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      },
+      automationOrchestration: {
+        runCodex: async () => {
+          codexCalls += 1;
+          return { exitCode: 0, content: "Codex output" };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+    await client.post("/providers", { ...createBuiltInProviders().deepseek, baseUrl: "https://deepseek.example" });
+    await client.post("/providers/deepseek/secret", { value: "sk-provider-2" });
+
+    const run = (await client.post("/automation-runs", {
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }, { provider: "deepseek" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    })) as any;
+    await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+    expect(((await client.get(`/automation-runs/${run.id}`)) as any).providers).toEqual([
+      expect.objectContaining({ provider: "glm", status: "succeeded" }),
+      expect.objectContaining({ provider: "deepseek", status: "failed" })
+    ]);
+
+    await client.post(`/automation-runs/${run.id}/retry`);
+    await waitFor(async () => {
+      const status = (await client.get(`/automation-runs/${run.id}`)) as any;
+      return status.status === "done" && status.providers.every((provider: any) => provider.status === "succeeded");
+    });
+
+    const retried = (await client.get(`/automation-runs/${run.id}`)) as any;
+    expect(deepseekAttempts).toBe(2);
+    expect(codexCalls).toBe(4);
+    expect(retried.providers).toEqual([
+      expect.objectContaining({ provider: "glm", status: "succeeded" }),
+      expect.objectContaining({ provider: "deepseek", status: "succeeded" })
+    ]);
+  });
 });
 
 async function fakeCheckClaudeBinary(): Promise<string> {
@@ -658,4 +1463,25 @@ class FailingSecretStore implements SecretStore {
   async fingerprint(): Promise<string> {
     throw new Error("secret backend unavailable");
   }
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for condition");
+}
+
+function extractRunOutputSection(output: string, label: string): string {
+  const marker = `# ${label}`;
+  const start = output.indexOf(marker);
+  if (start === -1) {
+    return "";
+  }
+  const next = output.indexOf("\n# ", start + marker.length);
+  return output.slice(start + marker.length, next === -1 ? undefined : next).trim();
 }

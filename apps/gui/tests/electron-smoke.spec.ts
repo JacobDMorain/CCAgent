@@ -13,8 +13,11 @@ test("Electron GUI opens built renderer shell", async () => {
   try {
     const page = await app.firstWindow();
     await expect(page.getByRole("heading", { name: "CCAgent" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review Workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Workspace roots" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Workspace root" })).toBeVisible();
   } finally {
     await app.close();
   }

@@ -3,6 +3,12 @@ import { z } from "zod";
 const providerIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const timeoutSchema = z.number().int().min(1000).max(3600000).default(600000);
 const maxOutputBytesSchema = z.number().int().min(1024).max(1048576).default(131072);
+const reviewStyleSchema = z.enum(["bugs", "architecture", "language", "full"]);
+const reviewBatchReviewerSchema = z.object({
+  provider: providerIdSchema,
+  model: z.string().min(1).optional()
+});
+const promptTemplateKindSchema = z.enum(["claude-review", "codex-edit"]);
 
 export const ProviderConfigSchema = z.object({
   id: providerIdSchema,
@@ -47,14 +53,51 @@ export const ReviewFileRequestSchema = z.object({
   model: z.string().min(1).optional(),
   cwd: z.string().min(1),
   file: z.string().min(1),
-  reviewStyle: z.enum(["bugs", "architecture", "language", "full"]).default("full"),
+  reviewStyle: reviewStyleSchema.default("full"),
   language: z.string().min(1).optional(),
+  mode: z.enum(["sync", "async"]).default("sync"),
   timeoutMs: timeoutSchema,
   maxOutputBytes: maxOutputBytesSchema
 });
 
+export const ReviewBatchRequestSchema = z.object({
+  cwd: z.string().min(1),
+  file: z.string().min(1),
+  reviewStyle: reviewStyleSchema.default("full"),
+  language: z.string().min(1).optional(),
+  reviewers: z.array(reviewBatchReviewerSchema).min(1),
+  timeoutMs: timeoutSchema,
+  maxOutputBytes: maxOutputBytesSchema
+});
+
+export const PromptTemplateSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+  kind: promptTemplateKindSchema,
+  name: z.string().min(1),
+  description: z.string().min(1),
+  version: z.number().int().min(1),
+  content: z.string().min(1),
+  requiredVariables: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]*$/)),
+  isDefault: z.boolean(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1)
+});
+
+export const AutomationRunRequestSchema = z.object({
+  cwd: z.string().min(1),
+  file: z.string().min(1),
+  reviewers: z.array(reviewBatchReviewerSchema).min(1),
+  claudeTemplateId: z.string().min(1),
+  codexTemplateId: z.string().min(1),
+  reviewStyle: reviewStyleSchema.default("full"),
+  language: z.string().min(1).optional(),
+  timeoutMs: timeoutSchema,
+  maxOutputBytes: maxOutputBytesSchema,
+  fullyAuto: z.boolean().default(true)
+});
+
 export const TaskResultSchema = z.object({
-  status: z.enum(["ok", "error", "cancelled", "timeout"]),
+  status: z.enum(["pending", "running", "ok", "error", "cancelled", "timeout"]),
   taskId: z.string().min(1),
   provider: providerIdSchema,
   model: z.string().min(1),

@@ -1,6 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  parseDelimitedLocalConfigValue,
+  parseExternalProviderConsent,
+  parseLocalOperatorConfig
+} from "../packages/provider/src/index.js";
 
 export type AcceptanceStatus = "automated" | "manual-required" | "manual-verified" | "missing";
 
@@ -220,6 +225,43 @@ const finalAcceptance: ItemSpec[] = [
         contains: ["Verified on 2026-06-05", "open.bigmodel.cn", "api.deepseek.com"]
       }
     ]
+  },
+  {
+    id: "local-egress-policy",
+    requirement: "Record local allowed roots and external provider consent without exposing secrets.",
+    evidence: [
+      { file: "docs/local-secrets.md", contains: ["CCAGENT_ALLOWED_ROOTS", "CCAGENT_EXTERNAL_PROVIDER_CONSENT"] },
+      {
+        file: "packages/provider/tests/providerRegistry.test.ts",
+        contains: ["CCAGENT_ALLOWED_ROOTS", "CCAGENT_EXTERNAL_PROVIDER_CONSENT"]
+      }
+    ]
+  },
+  {
+    id: "gui-automation-run",
+    requirement: "Run GUI-hosted end-to-end automation from multi-provider review to Codex edit output.",
+    evidence: [
+      {
+        file: "apps/daemon/src/automationManager.ts",
+        contains: ["createRun", "writeReviewPacket", "runCodexPhase"]
+      },
+      {
+        file: "apps/daemon/tests/daemon-api.test.ts",
+        contains: ["automation run completes multi-provider review", "automation run continues to codex"]
+      },
+      {
+        file: "apps/gui/src/renderer/routes/ReviewWorkspacePage.tsx",
+        contains: ["Start fully automatic run", "claudeTemplateId", "codexTemplateId"]
+      },
+      {
+        file: "apps/gui/src/renderer/routes/RunsPage.tsx",
+        contains: ["Rerun", "providerSummary"]
+      },
+      {
+        file: "apps/gui/src/renderer/App.tsx",
+        contains: ["Codex CLI path", "saveRuntimeSettings"]
+      }
+    ]
   }
 ];
 
@@ -254,7 +296,10 @@ export function writeAcceptanceAudit(root: string): AcceptanceAudit {
 }
 
 function auditItem(root: string, spec: ItemSpec, manualEvidence: Map<string, string[]>): AcceptanceItem {
-  const evidence = spec.evidence.map((entry) => checkEvidence(root, entry));
+  const evidence = [
+    ...spec.evidence.map((entry) => checkEvidence(root, entry)),
+    ...(spec.id === "local-egress-policy" ? localEgressPolicyEvidence(root) : [])
+  ];
   const hasMissing = evidence.some((line) => line.startsWith("missing:"));
   if (hasMissing) {
     return {
@@ -282,6 +327,26 @@ function auditItem(root: string, spec: ItemSpec, manualEvidence: Map<string, str
     status: "automated",
     evidence
   };
+}
+
+function localEgressPolicyEvidence(root: string): string[] {
+  const configPath = join(root, "ccagent.local-config.md");
+  if (!existsSync(configPath)) {
+    return ["local-config: ccagent.local-config.md not present"];
+  }
+
+  const env = parseLocalOperatorConfig(readFileSync(configPath, "utf8"));
+  const roots = parseDelimitedLocalConfigValue(env.CCAGENT_ALLOWED_ROOTS);
+  const consent = parseExternalProviderConsent(env.CCAGENT_EXTERNAL_PROVIDER_CONSENT);
+  const evidence = [
+    roots.length > 0
+      ? `local-config: allowedRoots=${roots.join(";")}`
+      : "local-config: allowedRoots=none",
+    consent.length > 0
+      ? `local-config: externalProviderConsent=${consent.map((entry) => `${entry.provider}:${entry.root}`).join(";")}`
+      : "local-config: externalProviderConsent=none"
+  ];
+  return evidence;
 }
 
 function readManualEvidence(root: string): Map<string, string[]> {

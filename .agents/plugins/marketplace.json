@@ -1,0 +1,20 @@
+{
+  "name": "ccagent-local",
+  "interface": {
+    "displayName": "CCAgent Local"
+  },
+  "plugins": [
+    {
+      "name": "ccagent",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ccagent"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -19,6 +19,7 @@
     "dev:daemon": "pnpm --filter @ccagent/daemon dev",
     "dev:mcp": "pnpm --filter @ccagent/mcp-server dev",
     "dev:gui": "pnpm --filter @ccagent/gui dev",
+    "start:gui": "powershell -ExecutionPolicy Bypass -File scripts/start-gui.ps1",
     "package:windows": "tsx scripts/package-windows.ts"
   },
   "devDependencies": {

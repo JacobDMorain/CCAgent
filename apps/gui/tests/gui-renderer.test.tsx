@@ -68,18 +68,83 @@ describe("GUI renderer", () => {
     expect(html).toContain("bad output");
   });
 
-  test("App renders provider, tasks, and workspace root settings surfaces", () => {
+  test("App renders provider, template, task, and runtime settings surfaces", () => {
     const html = renderToStaticMarkup(
       <App
         initialProviders={[providerFixture]}
         initialTasks={[]}
+        initialTemplates={[
+          {
+            id: "default-claude-review-full",
+            kind: "claude-review",
+            name: "Full Claude Review",
+            description: "Review",
+            version: 1,
+            content: "Review {file}",
+            requiredVariables: ["file"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            id: "default-codex-edit",
+            kind: "codex-edit",
+            name: "Codex Edit From Review Packet",
+            description: "Edit",
+            version: 1,
+            content: "Read {reviewPacket}",
+            requiredVariables: ["reviewPacket"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          }
+        ]}
+        initialRuns={[
+          {
+            id: "run_1",
+            status: "done",
+            cwd: "D:/project",
+            file: "D:/project/docs/handoff.md",
+            reviewStyle: "full",
+            claudeTemplateId: "default-claude-review-full",
+            codexTemplateId: "default-codex-edit",
+            fullyAuto: true,
+            outputDir: "D:/project/.ccagent/runs/run_1",
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:01.000Z",
+            finishedAt: "2026-06-08T10:00:01.000Z",
+            providers: [
+              {
+                runId: "run_1",
+                provider: "glm",
+                status: "succeeded",
+                position: 0
+              }
+            ]
+          }
+        ]}
         initialWorkspaceRoots={["D:/project"]}
       />
     );
 
+    expect(html).toContain("Review Workspace");
     expect(html).toContain("Providers");
+    expect(html).toContain("New provider");
+    expect(html).toContain("Delete provider");
+    expect(html).toContain("Prompt Templates");
+    expect(html).toContain("Runs");
+    expect(html).toContain("Start fully automatic run");
+    expect(html).toContain("Full Claude Review");
+    expect(html).toContain("run_1");
     expect(html).toContain("Tasks");
-    expect(html).toContain("Workspace roots");
+    expect(html).toContain("Showing the 3 most recent tasks");
+    expect(html).toContain("Expand");
+    expect(html).toContain("Clear history");
+    expect(html).toContain("Claude Code CLI path");
+    expect(html).toContain("Codex CLI path");
+    expect(html).toContain("Test Codex");
+    expect(html).toContain("Ready");
+    expect(html).not.toContain("Workspace roots");
     expect(html).toContain("D:/project");
   });
 });

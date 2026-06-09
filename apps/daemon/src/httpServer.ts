@@ -1,10 +1,35 @@
 import http from "node:http";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { CCAgentError, ErrorCodes, RunTaskRequestSchema, type ProviderConfig } from "@ccagent/core";
-import { InMemoryProviderStore, ProviderRegistry } from "@ccagent/provider";
+import {
+  AutomationRunRequestSchema,
+  buildReviewFilePrompt,
+  CCAgentError,
+  ErrorCodes,
+  PromptTemplateSchema,
+  ReviewBatchRequestSchema,
+  RunTaskRequestSchema,
+  type ProviderConfig
+} from "@ccagent/core";
+import {
+  createBuiltInProviders,
+  InMemoryProviderStore,
+  parseDelimitedLocalConfigValue,
+  parseExternalProviderConsent,
+  parseLocalOperatorConfig,
+  ProviderRegistry
+} from "@ccagent/provider";
 import { DpapiStore, type SecretStore } from "@ccagent/secrets";
-import { createDatabase, SqliteProviderStore, SqliteTaskStore } from "@ccagent/storage";
+import {
+  createDatabase,
+  SqliteProviderStore,
+  SqliteAutomationRunStore,
+  SqlitePromptTemplateStore,
+  SqliteReviewBatchStore,
+  SqliteTaskStore,
+  type ReviewBatchRecord,
+  type ReviewBatchTaskRecord
+} from "@ccagent/storage";
 import {
   createDaemonToken,
   defaultConfigPath,
@@ -12,8 +37,10 @@ import {
   saveSettingsToFile,
   type PartialDeep
 } from "./config.js";
+import { AutomationManager, type AutomationOrchestration } from "./automationManager.js";
 import { TaskManager, type TaskOrchestration } from "./taskManager.js";
 import type { DaemonSettings } from "@ccagent/core";
+import { spawnCli } from "./cliSpawn.js";
 
 export interface CreateDaemonOptions {
   port?: number;
@@ -23,6 +50,9 @@ export interface CreateDaemonOptions {
   taskStore?: SqliteTaskStore;
   secretStore?: SecretStore;
   orchestration?: Partial<TaskOrchestration>;
+  automationOrchestration?: Partial<AutomationOrchestration>;
+  providerTestFetch?: typeof fetch;
+  localConfigPath?: string;
 }
 
 export interface StartedDaemon {
@@ -44,9 +74,27 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
   }
   const database = createDatabase(databasePath);
   const taskStore = options.taskStore ?? new SqliteTaskStore(database);
+  const reviewBatchStore = new SqliteReviewBatchStore(database);
+  const automationRunStore = new SqliteAutomationRunStore(database);
+  const promptTemplateStore = new SqlitePromptTemplateStore(database);
   const providerStore = new SqliteProviderStore(database);
+  await syncLocalOperatorConfig({
+    providerStore,
+    secrets,
+    settings,
+    configPath,
+    localConfigPath: options.localConfigPath ?? defaultLocalConfigPath()
+  });
   const registry = new ProviderRegistry(new ProviderStoreAdapter(providerStore));
   const taskManager = new TaskManager(settings, registry, taskStore, secrets, options.orchestration);
+  const automationManager = new AutomationManager(
+    settings,
+    taskManager,
+    taskStore,
+    automationRunStore,
+    promptTemplateStore,
+    options.automationOrchestration
+  );
   recoverOrphanedTasks(taskStore);
 
   const auth = {
@@ -61,7 +109,11 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
     configPath,
     settings,
     taskManager,
-    taskStore
+    reviewBatchStore,
+    promptTemplateStore,
+    automationManager,
+    taskStore,
+    providerTestFetch: options.providerTestFetch ?? fetch
   });
 
   let address = await listen(server, settings);
@@ -78,7 +130,11 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
         configPath,
         settings,
         taskManager,
-        taskStore
+        reviewBatchStore,
+        promptTemplateStore,
+        automationManager,
+        taskStore,
+        providerTestFetch: options.providerTestFetch ?? fetch
       });
       address = await listen(server, settings);
     }
@@ -102,6 +158,73 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
       database.close();
     }
   };
+}
+
+interface LocalOperatorSyncOptions {
+  providerStore: SqliteProviderStore;
+  secrets: SecretStore;
+  settings: DaemonSettings;
+  configPath: string;
+  localConfigPath: string | undefined;
+}
+
+interface LocalOperatorSyncResult {
+  providers: string[];
+  allowedRoots: string[];
+  externalProviderConsent: Array<{ provider: string; root: string }>;
+}
+
+async function syncLocalOperatorConfig(options: LocalOperatorSyncOptions): Promise<LocalOperatorSyncResult> {
+  const { providerStore, secrets, settings, configPath, localConfigPath } = options;
+  const result: LocalOperatorSyncResult = {
+    providers: ["glm", "deepseek"],
+    allowedRoots: settings.workspace.allowedRoots,
+    externalProviderConsent: []
+  };
+  if (!localConfigPath || !existsSync(localConfigPath)) {
+    return result;
+  }
+
+  const env = parseLocalOperatorConfig(readFileSync(localConfigPath, "utf8"));
+  const allowedRoots = parseDelimitedLocalConfigValue(env.CCAGENT_ALLOWED_ROOTS);
+  if (allowedRoots.length > 0) {
+    settings.workspace.allowedRoots = Array.from(
+      new Set([...settings.workspace.allowedRoots, ...allowedRoots])
+    );
+    saveSettingsToFile(settings, configPath);
+    result.allowedRoots = settings.workspace.allowedRoots;
+  }
+  result.externalProviderConsent = parseExternalProviderConsent(env.CCAGENT_EXTERNAL_PROVIDER_CONSENT);
+
+  const providers = createBuiltInProviders();
+  const now = new Date().toISOString();
+  const specs = [
+    {
+      provider: providers.glm,
+      apiKey: env.GLM_API_KEY,
+      baseUrl: env.GLM_BASE_URL
+    },
+    {
+      provider: providers.deepseek,
+      apiKey: env.DEEPSEEK_API_KEY,
+      baseUrl: env.DEEPSEEK_BASE_URL
+    }
+  ];
+
+  for (const spec of specs) {
+    const existing = providerStore.getProvider(spec.provider.id);
+    const provider = {
+      ...spec.provider,
+      ...existing,
+      baseUrl: spec.baseUrl ?? existing?.baseUrl ?? spec.provider.baseUrl,
+      updatedAt: now
+    };
+    providerStore.saveProvider(provider);
+    if (spec.apiKey) {
+      await secrets.set(provider.apiKeyRef, spec.apiKey);
+    }
+  }
+  return result;
 }
 
 function createHttpServer(context: Omit<RouteContext, "request" | "response">): http.Server {
@@ -145,8 +268,12 @@ interface RouteContext {
   response: http.ServerResponse;
   secrets: SecretStore;
   settings: DaemonSettings;
+  reviewBatchStore: SqliteReviewBatchStore;
+  promptTemplateStore: SqlitePromptTemplateStore;
+  automationManager: AutomationManager;
   taskManager: TaskManager;
   taskStore: SqliteTaskStore;
+  providerTestFetch: typeof fetch;
 }
 
 async function route(context: RouteContext): Promise<void> {
@@ -195,12 +322,62 @@ async function route(context: RouteContext): Promise<void> {
     }
 
     if (request.method === "POST" && url.pathname === "/providers/test") {
-      const body = (await readJson(request)) as { provider?: string };
+      const body = (await readJson(request)) as { provider?: string; model?: string };
       if (!body.provider) {
         throw new CCAgentError(ErrorCodes.ProviderMissing, "provider is required");
       }
       const provider = await context.registry.getEnabledProvider(body.provider);
-      writeJson(response, 200, { status: "ok", provider: provider.id, latencyMs: 0 });
+      const model = body.model ?? provider.models.review ?? provider.models.default;
+      const startedAt = Date.now();
+      await testProviderConnection({
+        provider,
+        model,
+        apiKey: await context.secrets.get(provider.apiKeyRef),
+        fetchImpl: context.providerTestFetch
+      });
+      writeJson(response, 200, {
+        status: "ok",
+        provider: provider.id,
+        model,
+        latencyMs: Date.now() - startedAt
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/prompt-templates") {
+      writeJson(response, 200, context.promptTemplateStore.listTemplates());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/prompt-templates") {
+      const template = PromptTemplateSchema.parse(await readJson(request));
+      writeJson(response, 200, context.promptTemplateStore.saveTemplate(template));
+      return;
+    }
+
+    if (request.method === "PUT" && url.pathname.startsWith("/prompt-templates/")) {
+      const templateId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const template = PromptTemplateSchema.parse({ ...(await readJson(request) as object), id: templateId });
+      writeJson(response, 200, context.promptTemplateStore.saveTemplate(template));
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/prompt-templates/")) {
+      context.promptTemplateStore.deleteTemplate(decodeURIComponent(url.pathname.split("/")[2] ?? ""));
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/providers/sync-local-config") {
+      const body = (await readJson(request)) as { path?: string };
+      const result = await syncLocalOperatorConfig({
+        providerStore: context.providerStore,
+        secrets: context.secrets,
+        settings: context.settings,
+        configPath: context.configPath,
+        localConfigPath: body.path
+      });
+      writeJson(response, 200, { synced: true, ...result });
       return;
     }
 
@@ -208,6 +385,119 @@ async function route(context: RouteContext): Promise<void> {
       const parsed = RunTaskRequestSchema.parse(await readJson(request));
       const result = await context.taskManager.runTask(parsed);
       writeJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/automation-runs") {
+      const parsed = AutomationRunRequestSchema.parse(await readJson(request));
+      writeJson(response, 200, context.automationManager.createRun(parsed));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/automation-runs") {
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      writeJson(response, 200, context.automationManager.listRuns(limit));
+      return;
+    }
+
+    if (url.pathname.startsWith("/automation-runs/")) {
+      const [, , rawRunId, leaf] = url.pathname.split("/");
+      const runId = decodeURIComponent(rawRunId ?? "");
+      const maxBytes = Number(url.searchParams.get("maxBytes") ?? context.settings.tasks.maxOutputBytes);
+      if (request.method === "GET" && leaf === "output") {
+        writeJson(response, 200, context.automationManager.readRunOutput(runId, maxBytes));
+        return;
+      }
+      if (request.method === "POST" && leaf === "cancel") {
+        writeJson(response, 200, context.automationManager.cancelRun(runId));
+        return;
+      }
+      if (request.method === "POST" && leaf === "rerun-codex") {
+        writeJson(response, 200, context.automationManager.rerunCodex(runId));
+        return;
+      }
+      if (request.method === "POST" && leaf === "retry") {
+        writeJson(response, 200, context.automationManager.retryRun(runId));
+        return;
+      }
+      if (request.method === "DELETE" && !leaf) {
+        context.automationManager.deleteRun(runId);
+        writeJson(response, 200, { ok: true });
+        return;
+      }
+      if (request.method === "GET" && !leaf) {
+        writeJson(response, 200, context.automationManager.getRun(runId));
+        return;
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/review-batches") {
+      const parsed = ReviewBatchRequestSchema.parse(await readJson(request));
+      const batchId = `batch_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const startedAt = new Date().toISOString();
+      const tasks: ReviewBatchTaskRecord[] = [];
+
+      for (const [position, reviewer] of parsed.reviewers.entries()) {
+        const result = await context.taskManager.runTask({
+          provider: reviewer.provider,
+          model: reviewer.model,
+          cwd: parsed.cwd,
+          prompt: buildReviewFilePrompt({
+            provider: reviewer.provider,
+            model: reviewer.model,
+            cwd: parsed.cwd,
+            file: parsed.file,
+            reviewStyle: parsed.reviewStyle,
+            language: parsed.language,
+            timeoutMs: parsed.timeoutMs,
+            maxOutputBytes: parsed.maxOutputBytes
+          }),
+          files: [parsed.file],
+          mode: "async",
+          timeoutMs: parsed.timeoutMs,
+          maxOutputBytes: parsed.maxOutputBytes
+        });
+        tasks.push({
+          provider: reviewer.provider,
+          model: reviewer.model,
+          taskId: result.taskId,
+          position
+        });
+      }
+
+      const batch = context.reviewBatchStore.createBatch({
+        id: batchId,
+        cwd: parsed.cwd,
+        file: parsed.file,
+        reviewStyle: parsed.reviewStyle,
+        language: parsed.language,
+        startedAt,
+        tasks
+      });
+      writeJson(response, 200, {
+        status: "running",
+        batchId: batch.id,
+        cwd: batch.cwd,
+        file: batch.file,
+        tasks: batch.tasks.map(({ position: _position, ...task }) => task),
+        startedAt: batch.startedAt,
+        logsRef: `ccagent://review-batches/${batch.id}`
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/review-batches/")) {
+      const [, , batchId, leaf] = url.pathname.split("/");
+      const batch = context.reviewBatchStore.getBatch(decodeURIComponent(batchId));
+      if (!batch) {
+        throw new CCAgentError(ErrorCodes.TaskMissing, `review batch missing: ${batchId}`);
+      }
+      const maxBytes = Number(url.searchParams.get("maxBytes") ?? context.settings.tasks.maxOutputBytes);
+      if (leaf === "output") {
+        writeJson(response, 200, readBatchOutput(context, batch, maxBytes));
+        return;
+      }
+      writeJson(response, 200, readBatchStatus(context, batch));
       return;
     }
 
@@ -221,6 +511,12 @@ async function route(context: RouteContext): Promise<void> {
     if (request.method === "GET" && url.pathname === "/tasks") {
       const limit = Number(url.searchParams.get("limit") ?? 100);
       writeJson(response, 200, context.taskStore.listTasks(limit));
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/tasks") {
+      context.taskStore.clearTasks();
+      writeJson(response, 200, { ok: true });
       return;
     }
 
@@ -259,6 +555,51 @@ async function route(context: RouteContext): Promise<void> {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/settings/runtime") {
+      writeJson(response, 200, {
+        claudePath: context.settings.claude.path,
+        codexPath: context.settings.codex.path,
+        allowedRoots: context.settings.workspace.allowedRoots
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/settings/runtime") {
+      const body = (await readJson(request)) as {
+        claudePath?: string;
+        codexPath?: string;
+        allowedRoots?: string[];
+      };
+      if (body.claudePath !== undefined) {
+        context.settings.claude.path = body.claudePath;
+      }
+      if (body.codexPath !== undefined) {
+        context.settings.codex.path = body.codexPath;
+      }
+      if (body.allowedRoots !== undefined) {
+        context.settings.workspace.allowedRoots = body.allowedRoots;
+      }
+      saveSettingsToFile(context.settings, context.configPath);
+      writeJson(response, 200, {
+        claudePath: context.settings.claude.path,
+        codexPath: context.settings.codex.path,
+        allowedRoots: context.settings.workspace.allowedRoots
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/settings/codex/test") {
+      const startedAt = Date.now();
+      const result = await testCodexCli(context.settings.codex.path);
+      writeJson(response, 200, {
+        status: "ok",
+        codexPath: context.settings.codex.path,
+        version: result.version,
+        latencyMs: Date.now() - startedAt
+      });
+      return;
+    }
+
     writeJson(response, 404, { error: { code: "CCAGENT_NOT_FOUND", message: "not found" } });
   } catch (error) {
     const status = error instanceof CCAgentError ? 400 : 500;
@@ -290,6 +631,44 @@ async function getOrCreateDaemonToken(secrets: SecretStore, ref: string): Promis
   }
 }
 
+async function testCodexCli(codexPath: string): Promise<{ version: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawnCli(codexPath, ["--version"], { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new CCAgentError(ErrorCodes.Timeout, "Codex CLI test timed out"));
+    }, 10000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(new CCAgentError(
+        ErrorCodes.DaemonUnavailable,
+        `Codex CLI test failed: ${error.message}`,
+        stderr || stdout
+      ));
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code && code !== 0) {
+        reject(new CCAgentError(
+          ErrorCodes.DaemonUnavailable,
+          `Codex CLI test failed with exit code ${code}`,
+          stderr || stdout
+        ));
+        return;
+      }
+      resolve({ version: (stdout || stderr).trim() });
+    });
+  });
+}
+
 function recoverOrphanedTasks(taskStore: SqliteTaskStore): void {
   for (const task of taskStore.listTasks(Number.MAX_SAFE_INTEGER)) {
     if (task.status === "pending" || task.status === "running") {
@@ -304,6 +683,84 @@ function recoverOrphanedTasks(taskStore: SqliteTaskStore): void {
       taskStore.appendLog(task.id, "system", "Task marked as recovered daemon error");
     }
   }
+}
+
+async function testProviderConnection(input: {
+  provider: ProviderConfig;
+  model: string;
+  apiKey: string;
+  fetchImpl: typeof fetch;
+}): Promise<void> {
+  const response =
+    input.provider.mode === "anthropic-compatible"
+      ? await testAnthropicCompatibleProvider(input)
+      : await testOpenAiCompatibleProvider(input);
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new CCAgentError(
+      ErrorCodes.ProviderUnavailable,
+      `provider test failed with HTTP ${response.status}`,
+      detail.slice(0, 1000)
+    );
+  }
+}
+
+async function testOpenAiCompatibleProvider(input: {
+  provider: ProviderConfig;
+  model: string;
+  apiKey: string;
+  fetchImpl: typeof fetch;
+}): Promise<Response> {
+  return input.fetchImpl(`${trimTrailingSlash(input.provider.baseUrl)}/chat/completions`, {
+    method: "POST",
+    headers: buildProviderHeaders(input.provider, input.apiKey),
+    body: JSON.stringify({
+      model: input.model,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1,
+      stream: false
+    })
+  });
+}
+
+async function testAnthropicCompatibleProvider(input: {
+  provider: ProviderConfig;
+  model: string;
+  apiKey: string;
+  fetchImpl: typeof fetch;
+}): Promise<Response> {
+  return input.fetchImpl(`${trimTrailingSlash(input.provider.baseUrl)}/v1/messages`, {
+    method: "POST",
+    headers: {
+      ...buildProviderHeaders(input.provider, input.apiKey),
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1,
+      stream: false
+    })
+  });
+}
+
+function buildProviderHeaders(provider: ProviderConfig, apiKey: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    [provider.auth.header]: buildProviderAuthValue(provider, apiKey)
+  };
+}
+
+function buildProviderAuthValue(provider: ProviderConfig, apiKey: string): string {
+  if (provider.auth.header === "x-api-key") {
+    return apiKey;
+  }
+  return provider.auth.scheme === "Bearer" ? `Bearer ${apiKey}` : apiKey;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 class ProviderStoreAdapter {
@@ -355,7 +812,84 @@ const FETCH_BLOCKED_PORTS = new Set([
   6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080
 ]);
 
+function readBatchStatus(context: RouteContext, batch: ReviewBatchRecord) {
+  const tasks = batch.tasks.map((task) => {
+    const record = context.taskStore.getTask(task.taskId);
+    return {
+      provider: task.provider,
+      model: task.model,
+      taskId: task.taskId,
+      status: record?.status ?? "error",
+      error: record?.errorJson ? JSON.parse(record.errorJson) : undefined
+    };
+  });
+  return {
+    status: aggregateStatus(tasks.map((task) => task.status)),
+    batchId: batch.id,
+    cwd: batch.cwd,
+    file: batch.file,
+    tasks,
+    startedAt: batch.startedAt
+  };
+}
+
+function readBatchOutput(context: RouteContext, batch: ReviewBatchRecord, maxBytes: number) {
+  const reviews = batch.tasks.map((task) => {
+    const record = context.taskStore.getTask(task.taskId);
+    const status = record?.status ?? "error";
+    return {
+      provider: task.provider,
+      model: task.model,
+      taskId: task.taskId,
+      status,
+      content: status === "ok" ? context.taskStore.readOutput(task.taskId, maxBytes).content : undefined,
+      error: record?.errorJson ? JSON.parse(record.errorJson) : undefined
+    };
+  });
+  return {
+    status: aggregateStatus(reviews.map((review) => review.status)),
+    batchId: batch.id,
+    cwd: batch.cwd,
+    file: batch.file,
+    reviews,
+    summary: summarizeReviews(reviews)
+  };
+}
+
+function aggregateStatus(statuses: string[]): "running" | "ok" | "error" | "cancelled" | "timeout" {
+  if (statuses.some((status) => status === "running" || status === "pending")) {
+    return "running";
+  }
+  if (statuses.some((status) => status === "error")) {
+    return "error";
+  }
+  if (statuses.some((status) => status === "timeout")) {
+    return "timeout";
+  }
+  if (statuses.some((status) => status === "cancelled")) {
+    return "cancelled";
+  }
+  return "ok";
+}
+
+function summarizeReviews(
+  reviews: Array<{ provider: string; status: string; content?: string; error?: unknown }>
+): string {
+  return reviews
+    .map((review) => {
+      if (review.status === "ok") {
+        return `${review.provider}: ok (${review.content?.length ?? 0} chars)`;
+      }
+      return `${review.provider}: ${review.status}`;
+    })
+    .join("\n");
+}
+
 function defaultDatabasePath(): string {
   const appData = process.env.APPDATA ?? process.cwd();
   return `${appData}/CCAgent/ccagent.sqlite`;
+}
+
+function defaultLocalConfigPath(): string {
+  return process.env.CCAGENT_LOCAL_CONFIG_PATH ?? "";
 }

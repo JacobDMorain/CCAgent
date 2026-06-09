@@ -3,6 +3,7 @@ import type { ProviderConfig } from "@ccagent/core";
 import {
   buildProviderFromForm,
   formatOutput,
+  formatRunDecisionSummary,
   parseErrorMessage,
   toRuntimeError,
   upsertProvider
@@ -79,6 +80,60 @@ describe("GUI renderer logic", () => {
     expect(parseErrorMessage("raw error")).toBe("raw error");
   });
 
+  test("formatRunDecisionSummary shows only Codex adjudication from run output", () => {
+    const summary = formatRunDecisionSummary(
+      runFixture,
+      [
+        "# review-packet.md",
+        "",
+        "provider details",
+        "",
+        "# codex-decision-summary.md",
+        "",
+        "## Applied",
+        "- Updated section 4.",
+        "",
+        "## Rejected",
+        "- Rename file suggestion.",
+        "",
+        "# codex-output.md",
+        "",
+        "Applied: update section 4.",
+        "Rejected: rename file suggestion.",
+        "",
+        "# codex-stdout.log",
+        "",
+        "debug log"
+      ].join("\n")
+    );
+
+    expect(summary).toBe([
+      "Codex review decision for D:/project/docs/handoff.md:",
+      "",
+      "## Applied",
+      "- Updated section 4.",
+      "",
+      "## Rejected",
+      "- Rename file suggestion."
+    ].join("\n"));
+    expect(summary).not.toContain("provider details");
+    expect(summary).not.toContain("debug log");
+    expect(summary).not.toContain("Applied: update section 4.");
+  });
+
+  test("formatRunDecisionSummary falls back to user-facing run state when Codex output is missing", () => {
+    expect(formatRunDecisionSummary({ ...runFixture, status: "codex_editing" }, "")).toBe(
+      "Codex is still reviewing provider feedback for D:/project/docs/handoff.md."
+    );
+    expect(formatRunDecisionSummary({
+      ...runFixture,
+      status: "failed",
+      errorJson: JSON.stringify({ message: "Codex task timed out" })
+    }, "# final-report.md\n\nAutomation failed")).toBe(
+      "Codex did not produce a review decision for D:/project/docs/handoff.md.\nReason: Codex task timed out"
+    );
+  });
+
   test("toRuntimeError preserves structured error code when present", () => {
     const error = new Error("daemon down") as Error & { code: string };
     error.code = "CCAGENT_DAEMON_UNAVAILABLE";
@@ -123,4 +178,19 @@ const providerFixture: ProviderConfig = {
   models: {
     default: "glm-5.1"
   }
+};
+
+const runFixture = {
+  id: "run_1",
+  status: "done" as const,
+  cwd: "D:/project",
+  file: "D:/project/docs/handoff.md",
+  reviewStyle: "full" as const,
+  claudeTemplateId: "default-claude-review-full",
+  codexTemplateId: "default-codex-edit",
+  fullyAuto: true,
+  outputDir: "D:/project/.ccagent/runs/run_1",
+  createdAt: "2026-06-08T10:00:00.000Z",
+  updatedAt: "2026-06-08T10:00:01.000Z",
+  providers: []
 };

@@ -33,18 +33,120 @@ describe("GUI IPC handlers", () => {
     });
   });
 
+  test("runtime settings APIs route through daemon runtime settings endpoint", async () => {
+    const daemon = new FakeGuiDaemonClient();
+    daemon.nextGet = { claudePath: "claude", codexPath: "codex.cmd", allowedRoots: [] };
+    daemon.nextPost = { claudePath: "claude", codexPath: "custom-codex.cmd", allowedRoots: [] };
+    const handlers = createGuiApiHandlers(daemon);
+
+    await expect(handlers.getRuntimeSettings()).resolves.toMatchObject({ codexPath: "codex.cmd" });
+    await expect(handlers.saveRuntimeSettings({ codexPath: "custom-codex.cmd" })).resolves.toMatchObject({
+      codexPath: "custom-codex.cmd"
+    });
+    await handlers.testCodex();
+    expect(daemon.calls).toEqual([
+      { method: "GET", path: "/settings/runtime" },
+      { method: "POST", path: "/settings/runtime", body: { codexPath: "custom-codex.cmd" } },
+      { method: "POST", path: "/settings/codex/test", body: undefined }
+    ]);
+  });
+
   test("task APIs route through shared daemon client paths", async () => {
     const daemon = new FakeGuiDaemonClient();
     const handlers = createGuiApiHandlers(daemon);
 
     await handlers.listTasks();
+    await handlers.clearTasks();
     await handlers.cancelTask("task_1");
     await handlers.readTaskOutput("task_1");
 
     expect(daemon.calls).toEqual([
       { method: "GET", path: "/tasks?limit=100" },
+      { method: "DELETE", path: "/tasks" },
       { method: "POST", path: "/tasks/task_1/cancel", body: undefined },
       { method: "GET", path: "/tasks/task_1/output?maxBytes=131072" }
+    ]);
+  });
+
+  test("provider delete routes through daemon provider endpoint", async () => {
+    const daemon = new FakeGuiDaemonClient();
+    const handlers = createGuiApiHandlers(daemon);
+
+    await handlers.deleteProvider("glm");
+
+    expect(daemon.calls).toEqual([
+      { method: "DELETE", path: "/providers/glm" }
+    ]);
+  });
+
+  test("automation run APIs route through daemon automation endpoints", async () => {
+    const daemon = new FakeGuiDaemonClient();
+    const handlers = createGuiApiHandlers(daemon);
+
+    await handlers.createAutomationRun({
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    });
+    await handlers.listAutomationRuns();
+    await handlers.getAutomationRun("run_1");
+    await handlers.readAutomationRunOutput("run_1");
+    await handlers.deleteAutomationRun("run_1");
+    await handlers.cancelAutomationRun("run_1");
+    await handlers.retryAutomationRun("run_1");
+    await handlers.rerunCodexEdit("run_1");
+
+    expect(daemon.calls).toEqual([
+      {
+        method: "POST",
+        path: "/automation-runs",
+        body: {
+          cwd: "D:/project",
+          file: "docs/handoff.md",
+          reviewers: [{ provider: "glm" }],
+          claudeTemplateId: "default-claude-review-full",
+          codexTemplateId: "default-codex-edit"
+        }
+      },
+      { method: "GET", path: "/automation-runs?limit=100" },
+      { method: "GET", path: "/automation-runs/run_1" },
+      { method: "GET", path: "/automation-runs/run_1/output?maxBytes=131072" },
+      { method: "DELETE", path: "/automation-runs/run_1" },
+      { method: "POST", path: "/automation-runs/run_1/cancel", body: undefined },
+      { method: "POST", path: "/automation-runs/run_1/retry", body: undefined },
+      { method: "POST", path: "/automation-runs/run_1/rerun-codex", body: undefined }
+    ]);
+  });
+
+  test("prompt template APIs route through daemon template endpoints", async () => {
+    const daemon = new FakeGuiDaemonClient();
+    const handlers = createGuiApiHandlers(daemon);
+
+    await handlers.listPromptTemplates();
+    await handlers.savePromptTemplate({
+      id: "template-1",
+      kind: "codex-edit",
+      name: "Codex",
+      description: "Codex",
+      version: 1,
+      content: "Read {reviewPacket}",
+      requiredVariables: ["reviewPacket"],
+      isDefault: false,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+    await handlers.deletePromptTemplate("template-1");
+
+    expect(daemon.calls).toEqual([
+      { method: "GET", path: "/prompt-templates" },
+      {
+        method: "POST",
+        path: "/prompt-templates",
+        body: expect.objectContaining({ id: "template-1", kind: "codex-edit" })
+      },
+      { method: "DELETE", path: "/prompt-templates/template-1" }
     ]);
   });
 });

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DaemonClient } from "../packages/daemon-client/src/index.js";
-import { createBuiltInProviders } from "../packages/provider/src/index.js";
+import { createBuiltInProviders, parseLocalOperatorConfig } from "../packages/provider/src/index.js";
 import { MemorySecretStore } from "../packages/secrets/src/index.js";
 import { createDaemon } from "../apps/daemon/src/index.js";
 import { reviewFileTool } from "../apps/mcp-server/src/tools/reviewFile.js";
@@ -44,16 +44,6 @@ const providerSpecs: ProviderSpec[] = [
   { id: "glm", envName: "GLM_API_KEY", model: "glm-5.1", baseUrlEnvName: "GLM_BASE_URL" },
   { id: "deepseek", envName: "DEEPSEEK_API_KEY", model: "deepseek-v4-flash", baseUrlEnvName: "DEEPSEEK_BASE_URL" }
 ];
-
-const localConfigKeys = new Set([
-  "GLM_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "GLM_BASE_URL",
-  "DEEPSEEK_BASE_URL",
-  "DEEPSEEK_ANTHROPIC_BASE_URL",
-  "CCAGENT_DAEMON_TOKEN",
-  "CCAGENT_DAEMON_URL"
-]);
 
 export async function runRealProviderAcceptance(
   options: RealProviderAcceptanceOptions
@@ -191,29 +181,7 @@ export function readLocalConfigEnv(root: string): Record<string, string> {
     return {};
   }
 
-  const env: Record<string, string> = {};
-  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (!match || !localConfigKeys.has(match[1])) {
-      continue;
-    }
-
-    const value = stripOptionalQuotes(match[2].trim());
-    if (value) {
-      env[match[1]] = value;
-    }
-  }
-  return env;
-}
-
-function stripOptionalQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
+  return parseLocalOperatorConfig(readFileSync(path, "utf8"));
 }
 
 function writeManualEvidence(root: string, result: RealProviderAcceptanceResult): string {

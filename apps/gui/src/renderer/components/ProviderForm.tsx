@@ -5,7 +5,7 @@ export interface ProviderFormProps {
   provider?: ProviderConfig;
   secretFingerprint?: string;
   onSave?(provider: ProviderConfig, apiKey?: string): void | Promise<void>;
-  onTest?(provider: string, model?: string): void | Promise<void>;
+  onTest?(provider: ProviderConfig, apiKey?: string): void | Promise<void>;
 }
 
 export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: ProviderFormProps) {
@@ -89,8 +89,14 @@ export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: Pr
         <button type="submit">Save</button>
         <button
           type="button"
-          onClick={() => void onTest?.(current.id, current.models.review ?? current.models.default)}
-          disabled={!current.id}
+          onClick={(event) => {
+            const form = event.currentTarget.form;
+            if (!form) {
+              return;
+            }
+            const { provider, apiKey } = buildProviderFromForm(new FormData(form), current);
+            void onTest?.(provider, apiKey);
+          }}
         >
           Test
         </button>

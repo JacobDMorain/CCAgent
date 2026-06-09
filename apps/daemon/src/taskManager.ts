@@ -52,114 +52,44 @@ export class TaskManager {
       throw new CCAgentError(ErrorCodes.TaskLimit, "max concurrent task limit reached");
     }
 
-    this.running += 1;
-    try {
-      const provider = await this.providers.getEnabledProvider(request.provider);
-      const model = resolveProviderModel(provider, request.model);
-      const taskId = `task_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const startedAt = new Date().toISOString();
-      this.tasks.createTask({
-        id: taskId,
+    const provider = await this.providers.getEnabledProvider(request.provider);
+    const model = resolveProviderModel(provider, request.model);
+    const taskId = `task_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const startedAt = new Date().toISOString();
+    this.tasks.createTask({
+      id: taskId,
+      provider: provider.id,
+      model,
+      cwd: request.cwd,
+      prompt: request.prompt,
+      startedAt
+    });
+    this.tasks.updateTask(taskId, { status: "running" });
+    this.tasks.appendLog(taskId, "system", "Task runner started");
+
+    const execution = this.executeTask({
+      cwd,
+      model,
+      provider,
+      request,
+      startedAt,
+      taskId
+    });
+
+    if (request.mode === "async") {
+      execution.catch(() => undefined);
+      return {
+        status: "running",
+        taskId,
         provider: provider.id,
         model,
-        cwd: request.cwd,
-        prompt: request.prompt,
+        cwd,
+        logsRef: logsRef(taskId),
         startedAt
-      });
-      this.tasks.updateTask(taskId, { status: "running" });
-      this.tasks.appendLog(taskId, "system", "Task runner started");
-
-      let proxy: StartedProxy | undefined;
-      let portAllocation: PortAllocation | undefined;
-      const abortController = new AbortController();
-      this.activeControllers.set(taskId, abortController);
-      try {
-        const apiKey = await this.secrets.get(provider.apiKeyRef);
-        const redactor = createTaskRedactor([apiKey]);
-        const env =
-          provider.mode === "openai-compatible"
-            ? await this.buildOpenAiCompatibleEnv(taskId, provider, model, apiKey, (startedProxy, allocation, localToken) => {
-                proxy = startedProxy;
-                portAllocation = allocation;
-                redactor.add(localToken);
-              })
-            : buildAnthropicEnv(provider.baseUrl, apiKey, model);
-
-        await this.orchestration.checkClaudeBinary(this.settings.claude.path);
-        const output = await this.orchestration.runClaude({
-          taskId,
-          cwd,
-          prompt: request.prompt,
-          claudePath: this.settings.claude.path,
-          env,
-          timeoutMs: request.timeoutMs ?? this.settings.tasks.defaultTimeoutMs,
-          outputFormat: "json",
-          onStdout: (text) => this.tasks.appendLog(taskId, "stdout", redactor.redact(text)),
-          onStderr: (text) => this.tasks.appendLog(taskId, "stderr", redactor.redact(text)),
-          signal: abortController.signal
-        });
-        const content = redactor.redact(output.content);
-        const summary = redactor.redact(output.summary ?? output.content);
-        const finishedAt = new Date().toISOString();
-        const durationMs = Date.parse(finishedAt) - Date.parse(startedAt);
-        this.tasks.updateTask(taskId, {
-          status: "ok",
-          content,
-          summary,
-          finishedAt,
-          durationMs
-        });
-
-        return {
-          status: "ok",
-          taskId,
-          provider: provider.id,
-          model,
-          cwd,
-          summary,
-          content,
-          logsRef: logsRef(taskId),
-          startedAt,
-          finishedAt,
-          durationMs
-        };
-      } catch (error) {
-        const finishedAt = new Date().toISOString();
-        const durationMs = Date.parse(finishedAt) - Date.parse(startedAt);
-        const status = terminalStatusForError(error);
-        const taskError = createTaskRedactor().redactError(serializeTaskError(error));
-        this.tasks.appendLog(taskId, "system", `${taskError.code}: ${taskError.message}`);
-        this.tasks.updateTask(taskId, {
-          status,
-          errorJson: JSON.stringify(taskError),
-          finishedAt,
-          durationMs
-        });
-
-        return {
-          status,
-          taskId,
-          provider: provider.id,
-          model,
-          cwd,
-          error: taskError,
-          logsRef: logsRef(taskId),
-          startedAt,
-          finishedAt,
-          durationMs
-        };
-      } finally {
-        this.activeControllers.delete(taskId);
-        if (proxy) {
-          await proxy.stop();
-        }
-        if (portAllocation) {
-          await portAllocation.release();
-        }
-      }
-    } finally {
-      this.running -= 1;
+      } as TaskResult;
     }
+
+    return execution;
   }
 
   cancelTask(taskId: string) {
@@ -198,6 +128,115 @@ export class TaskManager {
       throw error;
     }
   }
+
+  private async executeTask(input: ExecuteTaskInput): Promise<TaskResult> {
+    this.running += 1;
+    const { cwd, model, provider, request, startedAt, taskId } = input;
+    let proxy: StartedProxy | undefined;
+    let portAllocation: PortAllocation | undefined;
+    const abortController = new AbortController();
+    this.activeControllers.set(taskId, abortController);
+    try {
+      const apiKey = await this.secrets.get(provider.apiKeyRef);
+      const redactor = createTaskRedactor([apiKey]);
+      const env =
+        provider.mode === "openai-compatible"
+          ? await this.buildOpenAiCompatibleEnv(
+              taskId,
+              provider,
+              model,
+              apiKey,
+              (startedProxy, allocation, localToken) => {
+                proxy = startedProxy;
+                portAllocation = allocation;
+                redactor.add(localToken);
+              }
+            )
+          : buildAnthropicEnv(provider.baseUrl, apiKey, model);
+
+      await this.orchestration.checkClaudeBinary(this.settings.claude.path);
+      const output = await this.orchestration.runClaude({
+        taskId,
+        cwd,
+        prompt: request.prompt,
+        claudePath: this.settings.claude.path,
+        env,
+        timeoutMs: request.timeoutMs ?? this.settings.tasks.defaultTimeoutMs,
+        outputFormat: "json",
+        onStdout: (text) => this.tasks.appendLog(taskId, "stdout", redactor.redact(text)),
+        onStderr: (text) => this.tasks.appendLog(taskId, "stderr", redactor.redact(text)),
+        signal: abortController.signal
+      });
+      const content = redactor.redact(output.content);
+      const summary = redactor.redact(output.summary ?? output.content);
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.parse(finishedAt) - Date.parse(startedAt);
+      this.tasks.updateTask(taskId, {
+        status: "ok",
+        content,
+        summary,
+        finishedAt,
+        durationMs
+      });
+
+      return {
+        status: "ok",
+        taskId,
+        provider: provider.id,
+        model,
+        cwd,
+        summary,
+        content,
+        logsRef: logsRef(taskId),
+        startedAt,
+        finishedAt,
+        durationMs
+      };
+    } catch (error) {
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.parse(finishedAt) - Date.parse(startedAt);
+      const status = terminalStatusForError(error);
+      const taskError = createTaskRedactor().redactError(serializeTaskError(error));
+      this.tasks.appendLog(taskId, "system", `${taskError.code}: ${taskError.message}`);
+      this.tasks.updateTask(taskId, {
+        status,
+        errorJson: JSON.stringify(taskError),
+        finishedAt,
+        durationMs
+      });
+
+      return {
+        status,
+        taskId,
+        provider: provider.id,
+        model,
+        cwd,
+        error: taskError,
+        logsRef: logsRef(taskId),
+        startedAt,
+        finishedAt,
+        durationMs
+      };
+    } finally {
+      this.activeControllers.delete(taskId);
+      if (proxy) {
+        await proxy.stop();
+      }
+      if (portAllocation) {
+        await portAllocation.release();
+      }
+      this.running -= 1;
+    }
+  }
+}
+
+interface ExecuteTaskInput {
+  cwd: string;
+  model: string;
+  provider: ProviderConfig;
+  request: RunTaskRequest;
+  startedAt: string;
+  taskId: string;
 }
 
 function createDefaultOrchestration(settings: DaemonSettings): TaskOrchestration {

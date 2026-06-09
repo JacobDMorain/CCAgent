@@ -1,4 +1,4 @@
-import type { ProviderConfig } from "@ccagent/core";
+import type { AutomationRunRecord, ProviderConfig } from "@ccagent/core";
 
 export function buildProviderFromForm(
   form: FormData,
@@ -6,6 +6,7 @@ export function buildProviderFromForm(
   now = new Date().toISOString()
 ): { provider: ProviderConfig; apiKey?: string } {
   const id = stringField(form, "id");
+  const authHeader = stringField(form, "authHeader") as ProviderConfig["auth"]["header"];
   return {
     provider: {
       id,
@@ -14,8 +15,10 @@ export function buildProviderFromForm(
       baseUrl: stringField(form, "baseUrl"),
       apiKeyRef: current.apiKeyRef || `ccagent/providers/${id}/api-key`,
       auth: {
-        header: stringField(form, "authHeader") as ProviderConfig["auth"]["header"],
-        scheme: stringField(form, "authScheme") as ProviderConfig["auth"]["scheme"]
+        header: authHeader,
+        scheme: authHeader === "x-api-key"
+          ? "Raw"
+          : stringField(form, "authScheme") as ProviderConfig["auth"]["scheme"]
       },
       models: {
         default: stringField(form, "defaultModel"),
@@ -52,6 +55,36 @@ export function formatOutput(output: unknown): string {
   return typeof output === "string" ? output : JSON.stringify(output, null, 2);
 }
 
+export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: string): string {
+  const decisionSummary = extractOutputSection(runOutput, "codex-decision-summary.md");
+  const codexOutput = decisionSummary || extractOutputSection(runOutput, "codex-output.md");
+  if (codexOutput) {
+    return [
+      `Codex review decision for ${run.file}:`,
+      "",
+      codexOutput
+    ].join("\n");
+  }
+
+  if (run.status === "codex_editing" || run.status === "verifying") {
+    return `Codex is still reviewing provider feedback for ${run.file}.`;
+  }
+
+  if (run.status === "reviewing" || run.status === "merging" || run.status === "queued") {
+    return `Provider review is still running for ${run.file}. Codex has not produced a review decision yet.`;
+  }
+
+  if (run.status === "failed") {
+    const reason = parseErrorMessage(run.errorJson);
+    return [
+      `Codex did not produce a review decision for ${run.file}.`,
+      reason ? `Reason: ${reason.replace(/^CCAGENT_[A-Z_]+:\s*/, "")}` : undefined
+    ].filter(Boolean).join("\n");
+  }
+
+  return `No Codex review decision is available for ${run.file}.`;
+}
+
 export function parseErrorMessage(errorJson?: string): string {
   if (!errorJson) {
     return "";
@@ -63,6 +96,21 @@ export function parseErrorMessage(errorJson?: string): string {
   } catch {
     return errorJson;
   }
+}
+
+function extractOutputSection(output: string, label: string): string {
+  const marker = `# ${label}`;
+  const start = output.indexOf(marker);
+  if (start === -1) {
+    return "";
+  }
+
+  const contentStart = start + marker.length;
+  const nextSection = output.indexOf("\n# ", contentStart);
+  const rawSection = nextSection === -1
+    ? output.slice(contentStart)
+    : output.slice(contentStart, nextSection);
+  return rawSection.trim();
 }
 
 export function toRuntimeError(error: unknown): { code: string; message: string } {

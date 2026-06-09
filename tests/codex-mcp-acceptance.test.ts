@@ -35,7 +35,9 @@ describe("Codex MCP acceptance", () => {
         "[mcp_servers.ccagent]",
         'command = "node"',
         `args = ["${mcpEntry}"]`,
+        `cwd = "${root.replaceAll("\\", "/")}"`,
         '[mcp_servers.ccagent.env]',
+        `CCAGENT_LOCAL_CONFIG_PATH = "${join(root, "ccagent.local-config.md").replaceAll("\\", "/")}"`,
         'CCAGENT_DAEMON_URL = "http://127.0.0.1:47621"',
         'CCAGENT_DAEMON_TOKEN = "ccagent_secret_should_not_be_copied"'
       ].join("\n")
@@ -50,6 +52,7 @@ describe("Codex MCP acceptance", () => {
     expect(result.status).toBe("passed");
     const manualEvidence = readFileSync(join(root, "dist", "acceptance", "manual-evidence.json"), "utf8");
     expect(manualEvidence).toContain("codex-mcp-registration");
+    expect(manualEvidence).toContain("CCAGENT_LOCAL_CONFIG_PATH");
     expect(manualEvidence).toContain("CCAGENT_DAEMON_TOKEN without recording its value");
     expect(manualEvidence).not.toContain("ccagent_secret_should_not_be_copied");
   });

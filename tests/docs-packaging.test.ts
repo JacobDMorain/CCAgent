@@ -10,8 +10,14 @@ describe("documentation and packaging", () => {
       "docs/codex-mcp-setup.md",
       "docs/provider-config.md",
       "docs/local-secrets.md",
+      "docs/ccagent-tenant-policy-request.md",
+      "docs/ccagent-admin-handoff.md",
       "docs/manual-evidence.example.json",
       "docs/release-checklist.md",
+      "plugins/ccagent/.codex-plugin/plugin.json",
+      "plugins/ccagent/.mcp.json",
+      "plugins/ccagent/skills/ccagent-multi-provider-review/SKILL.md",
+      ".agents/plugins/marketplace.json",
       "scripts/package-windows.ts",
       "scripts/acceptance-audit.ts",
       "scripts/local-runtime-acceptance.ts",
@@ -33,6 +39,12 @@ describe("documentation and packaging", () => {
       "apps/mcp-server/dist/apps/mcp-server/src/index.js",
       "ccagent.review_file",
       "ccagent.run_task",
+      "ccagent.review_file_multi",
+      "ccagent.get_review_batch_status",
+      "ccagent.read_review_batch_output",
+      "\"mode\": \"async\"",
+      "ccagent.get_task_status",
+      "ccagent.read_task_output",
       "daemon unavailable",
       "Claude binary missing",
       "provider missing",
@@ -94,6 +106,11 @@ describe("documentation and packaging", () => {
     for (const required of [
       "GLM_API_KEY",
       "DEEPSEEK_API_KEY",
+      "GLM_BASE_URL",
+      "CCAGENT_LOCAL_CONFIG_PATH",
+      "CCAGENT_ALLOWED_ROOTS",
+      "CCAGENT_EXTERNAL_PROVIDER_CONSENT",
+      "ccagent.local-config.md",
       "PowerShell",
       ".env.local",
       "Do not paste real API keys",
@@ -101,6 +118,67 @@ describe("documentation and packaging", () => {
       "pnpm.cmd acceptance:audit"
     ]) {
       expect(text).toContain(required);
+    }
+  });
+
+  test("repo CCAgent plugin and tenant policy request document multi-provider review governance", () => {
+    const plugin = JSON.parse(read("plugins/ccagent/.codex-plugin/plugin.json")) as {
+      name: string;
+      mcpServers: string;
+      skills: string;
+      interface: { displayName: string; defaultPrompt: string[] };
+    };
+    const mcp = read("plugins/ccagent/.mcp.json");
+    const skill = read("plugins/ccagent/skills/ccagent-multi-provider-review/SKILL.md");
+    const marketplace = JSON.parse(read(".agents/plugins/marketplace.json")) as {
+      name: string;
+      plugins: Array<{ name: string; source: { path: string } }>;
+    };
+    const policy = read("docs/ccagent-tenant-policy-request.md");
+    const handoff = read("docs/ccagent-admin-handoff.md");
+
+    expect(plugin.name).toBe("ccagent");
+    expect(plugin.mcpServers).toBe("./.mcp.json");
+    expect(plugin.skills).toBe("./skills/");
+    expect(plugin.interface.displayName).toBe("CCAgent");
+    expect(plugin.interface.defaultPrompt.join("\n")).toContain("multi-provider");
+    expect(mcp).toContain("\"cwd\": \"../..\"");
+    expect(mcp).toContain("apps/mcp-server/dist/apps/mcp-server/src/index.js");
+    expect(skill).toContain("ccagent.review_file_multi");
+    expect(skill).toContain("ccagent.read_review_batch_output");
+    expect(marketplace.name).toBe("ccagent-local");
+    expect(marketplace.plugins).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "ccagent",
+          source: { path: "./plugins/ccagent", source: "local" }
+        })
+      ])
+    );
+    for (const required of [
+      "Provider Allowlist",
+      "Workspace Root Scope",
+      "CCAGENT_ALLOWED_ROOTS",
+      "CCAGENT_EXTERNAL_PROVIDER_CONSENT",
+      "Audit Expectations",
+      "Cross-Device Rollout"
+    ]) {
+      expect(policy).toContain(required);
+    }
+    for (const required of [
+      "## 1. 目标",
+      "Codex App 使用权限",
+      "目标使用入口是 Codex App",
+      "## 2. Codex App 权限开通步骤",
+      "## 3. 需要允许的策略",
+      "## 4. 必须继续禁止的行为",
+      "## 5. 设备配置和验收",
+      "## 6. 审批记录和回滚",
+      "ccagent.review_file_multi",
+      "CCAGENT_ALLOWED_ROOTS",
+      "CCAGENT_EXTERNAL_PROVIDER_CONSENT"
+    ]) {
+      expect(handoff).toContain(required);
     }
   });
 

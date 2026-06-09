@@ -2,6 +2,17 @@ export type ProviderMode = "anthropic-compatible" | "openai-compatible";
 export type TaskStatus = "pending" | "running" | "ok" | "error" | "cancelled" | "timeout";
 export type TerminalTaskStatus = "ok" | "error" | "cancelled" | "timeout";
 export type ReviewStyle = "bugs" | "architecture" | "language" | "full";
+export type PromptTemplateKind = "claude-review" | "codex-edit";
+export type AutomationRunStatus =
+  | "queued"
+  | "reviewing"
+  | "merging"
+  | "codex_editing"
+  | "verifying"
+  | "done"
+  | "failed"
+  | "cancelled";
+export type AutomationProviderStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
 
 export interface ProviderConfig {
   id: string;
@@ -48,12 +59,101 @@ export interface ReviewFileRequest {
   file: string;
   reviewStyle?: ReviewStyle;
   language?: string;
+  mode?: "sync" | "async";
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
 
+export interface ReviewBatchRequest {
+  cwd: string;
+  file: string;
+  reviewStyle?: ReviewStyle;
+  language?: string;
+  reviewers: Array<{
+    provider: string;
+    model?: string;
+  }>;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+export interface PromptTemplate {
+  id: string;
+  kind: PromptTemplateKind;
+  name: string;
+  description: string;
+  version: number;
+  content: string;
+  requiredVariables: string[];
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationRunRequest {
+  cwd: string;
+  file: string;
+  reviewers: Array<{
+    provider: string;
+    model?: string;
+  }>;
+  claudeTemplateId: string;
+  codexTemplateId: string;
+  reviewStyle?: ReviewStyle;
+  language?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  fullyAuto?: boolean;
+}
+
+export interface AutomationRunRecord {
+  id: string;
+  status: AutomationRunStatus;
+  cwd: string;
+  file: string;
+  reviewStyle: ReviewStyle;
+  language?: string;
+  claudeTemplateId: string;
+  codexTemplateId: string;
+  fullyAuto: boolean;
+  outputDir: string;
+  reviewPacketPath?: string;
+  codexPromptPath?: string;
+  codexOutputPath?: string;
+  diffPath?: string;
+  finalReportPath?: string;
+  errorJson?: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  providers: AutomationRunProviderRecord[];
+  codexTask?: CodexEditTaskRecord;
+}
+
+export interface AutomationRunProviderRecord {
+  runId: string;
+  provider: string;
+  model?: string;
+  taskId?: string;
+  status: AutomationProviderStatus;
+  errorJson?: string;
+  outputPath?: string;
+  position: number;
+}
+
+export interface CodexEditTaskRecord {
+  runId: string;
+  taskId: string;
+  status: TaskStatus;
+  promptPath: string;
+  outputPath?: string;
+  errorJson?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface TaskResult {
-  status: TerminalTaskStatus;
+  status: TaskStatus;
   taskId: string;
   provider: string;
   model: string;
@@ -80,6 +180,9 @@ export interface DaemonSettings {
   claude: {
     path: string;
     requiredVersion?: string;
+  };
+  codex: {
+    path: string;
   };
   workspace: {
     allowedRoots: string[];

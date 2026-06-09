@@ -1,0 +1,14 @@
+interface:
+  display_name: "CCAgent Multi Provider Review"
+  short_description: "Review local files with CCAgent across configured providers."
+  brand_color: "#2563EB"
+  default_prompt: "Use $ccagent-multi-provider-review to review this local file with all configured providers."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "ccagent"
+      description: "Local CCAgent MCP server"
+
+policy:
+  allow_implicit_invocation: true

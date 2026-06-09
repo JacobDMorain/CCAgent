@@ -1,0 +1,38 @@
+{
+  "name": "ccagent",
+  "version": "0.1.0",
+  "description": "Run local CCAgent reviews from Codex with one or more external providers.",
+  "author": {
+    "name": "Local developer"
+  },
+  "homepage": "https://local.ccagent.invalid/",
+  "repository": "https://local.ccagent.invalid/",
+  "license": "Local",
+  "keywords": [
+    "ccagent",
+    "code-review",
+    "mcp",
+    "multi-provider",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "CCAgent",
+    "shortDescription": "Review local files with CCAgent and multiple providers.",
+    "longDescription": "CCAgent connects Codex to a local daemon that runs Claude Code CLI against configured external providers. Use it to review local files with one provider or fan out the same file to multiple providers, then poll and read a persisted daemon-side batch result.",
+    "developerName": "Local developer",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Use CCAgent to review this file with GLM and DeepSeek.",
+      "Run a multi-provider CCAgent review for a local document.",
+      "Check CCAgent daemon health and list configured providers."
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

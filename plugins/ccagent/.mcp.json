@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ccagent": {
+      "cwd": "../..",
+      "command": "node",
+      "args": [
+        "./apps/mcp-server/dist/apps/mcp-server/src/index.js"
+      ],
+      "env": {
+        "CCAGENT_LOCAL_CONFIG_PATH": "./ccagent.local-config.md",
+        "CCAGENT_DAEMON_URL": "http://127.0.0.1:47621"
+      }
+    }
+  }
+}
