@@ -986,6 +986,95 @@ describe("daemon API", () => {
     await expect(client.delete("/prompt-templates/custom-codex")).resolves.toEqual({ ok: true });
   });
 
+  test("review role CRUD, generated role creation, and promotion work through daemon API", async () => {
+    const codexPrompts: string[] = [];
+    const root = join(tmpdir(), `ccagent-role-generate-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "handoff.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Role target\n", "utf8");
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: [root] } },
+      automationOrchestration: {
+        runCodex: async (input) => {
+          codexPrompts.push(input.prompt);
+          return {
+            exitCode: 0,
+            content: JSON.stringify({
+              roles: [
+                {
+                  id: "algorithm-consistency",
+                  name: "算法一致性审查员",
+                  description: "检查算法描述和实现上下文是否一致。",
+                  prompt: "你负责检查算法一致性。",
+                  focusAreas: ["公式", "伪代码"],
+                  outputInstructions: "按 ## Role 分段输出。",
+                  defaultSelected: true
+                }
+              ]
+            })
+          };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+
+    const initialRoles = (await client.get("/review-roles")) as any[];
+    expect(initialRoles.map((role) => role.id)).toEqual([
+      "document-structure",
+      "fact-consistency",
+      "actionability",
+      "risk-opposition",
+      "language-expression"
+    ]);
+
+    const customRole = {
+      id: "handoff-owner",
+      name: "交接负责人",
+      description: "检查交接完整性。",
+      prompt: "你负责检查交接完整性。",
+      focusAreas: ["交接边界"],
+      outputInstructions: "列出缺口。",
+      defaultSelected: false,
+      source: "global",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z"
+    };
+    await expect(client.post("/review-roles", customRole)).resolves.toMatchObject({
+      id: "handoff-owner",
+      source: "global"
+    });
+    await expect(client.get("/review-roles")).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "handoff-owner" })])
+    );
+
+    const generated = (await client.post("/review-roles/generate", {
+      cwd: root,
+      file: targetPath,
+      language: "中文"
+    })) as any;
+    expect(codexPrompts[0]).toContain("Generate review roles");
+    expect(codexPrompts[0]).toContain(targetPath);
+    expect(generated.roles).toEqual([
+      expect.objectContaining({
+        id: "algorithm-consistency",
+        source: "generated",
+        defaultSelected: true
+      })
+    ]);
+
+    await expect(client.post("/review-roles/promote", { role: generated.roles[0] })).resolves.toMatchObject({
+      id: "algorithm-consistency",
+      source: "global"
+    });
+    await expect(client.get("/review-roles")).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "algorithm-consistency", source: "global" })])
+    );
+
+    await expect(client.delete("/review-roles/handoff-owner")).resolves.toEqual({ ok: true });
+  });
+
   test("startup upgrades older built-in default prompt templates without overwriting custom templates", async () => {
     const databasePath = join(tmpdir(), `ccagent-template-upgrade-${Date.now()}-${Math.random()}.sqlite`);
     const configPath = join(tmpdir(), `ccagent-template-upgrade-${Date.now()}-${Math.random()}.json`);
@@ -1112,6 +1201,106 @@ describe("daemon API", () => {
     await expect(client.get(`/automation-runs/${run.id}/output?maxBytes=5000`)).resolves.toMatchObject({
       content: expect.stringContaining("## Applied\n- User-facing summary only")
     });
+  });
+
+  test("automation run injects selected review roles into one provider task and review packet", async () => {
+    const providerPrompts: string[] = [];
+    const codexPrompts: string[] = [];
+    const root = join(tmpdir(), `ccagent-role-run-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "handoff.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+    const daemon = await startDaemon({
+      port: 0,
+      settings: { workspace: { allowedRoots: [root] } },
+      orchestration: {
+        checkClaudeBinary: fakeCheckClaudeBinary,
+        runClaude: async (input) => {
+          providerPrompts.push(input.prompt);
+          return {
+            content: [
+              "## Role: 文档结构审查员",
+              "- Structure finding",
+              "",
+              "## Role: 事实一致性审查员",
+              "- Fact finding"
+            ].join("\n"),
+            raw: "{}"
+          };
+        },
+        allocatePort: async () => ({ port: 41031, release: async () => undefined }),
+        startProxy: async (config) => ({
+          taskId: config.taskId,
+          baseUrl: `http://127.0.0.1:${config.port}`,
+          stop: async () => undefined
+        })
+      },
+      automationOrchestration: {
+        runCodex: async (input) => {
+          codexPrompts.push(input.prompt);
+          if (input.prompt.includes("Codex edit output")) {
+            return {
+              exitCode: 0,
+              content: [
+                "## Applied",
+                "- Provider finding or theme: role grouped finding",
+                "",
+                "## Rejected",
+                "- None",
+                "",
+                "## Deferred",
+                "- None",
+                "",
+                "## User-Facing Summary",
+                "No changes.",
+                "",
+                "## Continue Decision",
+                "continue: no",
+                "reason: no actionable changes",
+                "confidence: high",
+                "next_focus:",
+                "- none",
+                "risk_flags:",
+                "- none"
+              ].join("\n")
+            };
+          }
+          return { exitCode: 0, content: "Codex reviewed role grouped packet." };
+        }
+      }
+    });
+    daemons.push(daemon);
+    const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+    await client.post("/providers", createBuiltInProviders().glm);
+    await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+    const roles = (await client.get("/review-roles")) as any[];
+    const selectedRoles = roles.filter((role) => ["document-structure", "fact-consistency"].includes(role.id));
+    const run = (await client.post("/automation-runs", {
+      cwd: root,
+      file: targetPath,
+      reviewers: [{ provider: "glm", roleIds: selectedRoles.map((role) => role.id) }],
+      roles: selectedRoles,
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    })) as any;
+
+    await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+    const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+    const output = (await client.get(`/automation-runs/${run.id}/output?maxBytes=12000`)) as any;
+    const inputJson = JSON.parse(readFileSync(join(completed.outputDir, "input.json"), "utf8"));
+    const rolesJson = JSON.parse(readFileSync(join(completed.outputDir, "roles.json"), "utf8"));
+
+    expect(providerPrompts).toHaveLength(1);
+    expect(providerPrompts[0]).toContain("Role team");
+    expect(providerPrompts[0]).toContain("文档结构审查员");
+    expect(providerPrompts[0]).toContain("事实一致性审查员");
+    expect(providerPrompts[0]).toContain("Provider outputs must be grouped by role");
+    expect(inputJson.reviewers[0].roleIds).toEqual(["document-structure", "fact-consistency"]);
+    expect(rolesJson.selectedRoles.map((role: any) => role.id)).toEqual(["document-structure", "fact-consistency"]);
+    expect(output.content).toContain("### Role: 文档结构审查员");
+    expect(output.content).toContain("### Role: 事实一致性审查员");
+    expect(codexPrompts[0]).toContain("role grouped");
   });
 
   test("automation run uses Codex-written decision summary file when stdout is only a confirmation", async () => {

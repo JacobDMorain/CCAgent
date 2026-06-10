@@ -7,7 +7,8 @@ const maxIterationsSchema = z.number().int().min(1).max(10).default(1);
 const reviewStyleSchema = z.enum(["bugs", "architecture", "language", "full"]);
 const reviewBatchReviewerSchema = z.object({
   provider: providerIdSchema,
-  model: z.string().min(1).optional()
+  model: z.string().min(1).optional(),
+  roleIds: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/)).optional()
 });
 const promptTemplateKindSchema = z.enum(["claude-review", "codex-edit"]);
 
@@ -84,10 +85,24 @@ export const PromptTemplateSchema = z.object({
   updatedAt: z.string().min(1)
 });
 
+export const ReviewRoleSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  prompt: z.string().min(1),
+  focusAreas: z.array(z.string().min(1)),
+  outputInstructions: z.string().min(1),
+  defaultSelected: z.boolean(),
+  source: z.enum(["global", "generated"]),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1)
+});
+
 export const AutomationRunRequestSchema = z.object({
   cwd: z.string().min(1),
   file: z.string().min(1),
   reviewers: z.array(reviewBatchReviewerSchema).min(1),
+  roles: z.array(ReviewRoleSchema).optional(),
   claudeTemplateId: z.string().min(1),
   codexTemplateId: z.string().min(1),
   reviewStyle: reviewStyleSchema.default("full"),

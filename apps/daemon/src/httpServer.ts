@@ -2,14 +2,19 @@ import http from "node:http";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  assertCwdAllowed,
+  assertFileInsideCwd,
   AutomationRunRequestSchema,
   buildReviewFilePrompt,
   CCAgentError,
+  createBuiltInReviewRoles,
   ErrorCodes,
   PromptTemplateSchema,
+  ReviewRoleSchema,
   ReviewBatchRequestSchema,
   RunTaskRequestSchema,
-  type ProviderConfig
+  type ProviderConfig,
+  type ReviewRole
 } from "@ccagent/core";
 import {
   createBuiltInProviders,
@@ -25,6 +30,7 @@ import {
   SqliteProviderStore,
   SqliteAutomationRunStore,
   SqlitePromptTemplateStore,
+  SqliteReviewRoleStore,
   SqliteReviewBatchStore,
   SqliteTaskStore,
   type ReviewBatchRecord,
@@ -77,7 +83,9 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
   const reviewBatchStore = new SqliteReviewBatchStore(database);
   const automationRunStore = new SqliteAutomationRunStore(database);
   const promptTemplateStore = new SqlitePromptTemplateStore(database);
+  const reviewRoleStore = new SqliteReviewRoleStore(database);
   const providerStore = new SqliteProviderStore(database);
+  seedBuiltInReviewRoles(reviewRoleStore);
   await syncLocalOperatorConfig({
     providerStore,
     secrets,
@@ -93,6 +101,7 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
     taskStore,
     automationRunStore,
     promptTemplateStore,
+    reviewRoleStore,
     options.automationOrchestration
   );
   recoverOrphanedTasks(taskStore);
@@ -111,6 +120,7 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
     taskManager,
     reviewBatchStore,
     promptTemplateStore,
+    reviewRoleStore,
     automationManager,
     taskStore,
     providerTestFetch: options.providerTestFetch ?? fetch
@@ -132,6 +142,7 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<S
         taskManager,
         reviewBatchStore,
         promptTemplateStore,
+        reviewRoleStore,
         automationManager,
         taskStore,
         providerTestFetch: options.providerTestFetch ?? fetch
@@ -270,6 +281,7 @@ interface RouteContext {
   settings: DaemonSettings;
   reviewBatchStore: SqliteReviewBatchStore;
   promptTemplateStore: SqlitePromptTemplateStore;
+  reviewRoleStore: SqliteReviewRoleStore;
   automationManager: AutomationManager;
   taskManager: TaskManager;
   taskStore: SqliteTaskStore;
@@ -346,6 +358,53 @@ async function route(context: RouteContext): Promise<void> {
 
     if (request.method === "GET" && url.pathname === "/prompt-templates") {
       writeJson(response, 200, context.promptTemplateStore.listTemplates());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/review-roles") {
+      writeJson(response, 200, context.reviewRoleStore.listRoles());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/review-roles") {
+      const role = ReviewRoleSchema.parse(await readJson(request));
+      writeJson(response, 200, context.reviewRoleStore.saveRole(role));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/review-roles/generate") {
+      const body = (await readJson(request)) as { cwd?: string; file?: string; language?: string };
+      if (!body.cwd || !body.file) {
+        throw new CCAgentError("CCAGENT_ROLE_GENERATE_INVALID", "cwd and file are required");
+      }
+      const cwd = assertRoleCwd(context.settings, body.cwd);
+      const file = assertRoleFile(cwd, body.file);
+      writeJson(response, 200, await generateReviewRoles(context.automationManager, {
+        cwd,
+        file,
+        requestedFile: body.file,
+        language: body.language,
+        timeoutMs: context.settings.tasks.defaultTimeoutMs
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/review-roles/promote") {
+      const body = (await readJson(request)) as { role?: unknown };
+      const now = new Date().toISOString();
+      const role = ReviewRoleSchema.parse({
+        ...(body.role as object),
+        source: "global",
+        updatedAt: now,
+        createdAt: (body.role as ReviewRole | undefined)?.createdAt ?? now
+      });
+      writeJson(response, 200, context.reviewRoleStore.saveRole(role));
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/review-roles/")) {
+      context.reviewRoleStore.deleteRole(decodeURIComponent(url.pathname.split("/")[2] ?? ""));
+      writeJson(response, 200, { ok: true });
       return;
     }
 
@@ -682,6 +741,103 @@ function recoverOrphanedTasks(taskStore: SqliteTaskStore): void {
       });
       taskStore.appendLog(task.id, "system", "Task marked as recovered daemon error");
     }
+  }
+}
+
+function seedBuiltInReviewRoles(store: SqliteReviewRoleStore): void {
+  for (const role of createBuiltInReviewRoles()) {
+    if (!store.getRole(role.id)) {
+      store.saveRole(role);
+    }
+  }
+}
+
+function assertRoleCwd(settings: DaemonSettings, cwd: string): string {
+  return assertCwdAllowed(cwd, settings.workspace.allowedRoots);
+}
+
+function assertRoleFile(cwd: string, file: string): string {
+  return assertFileInsideCwd(cwd, file);
+}
+
+async function generateReviewRoles(
+  automationManager: AutomationManager,
+  input: { cwd: string; file: string; requestedFile?: string; language?: string; timeoutMs: number }
+): Promise<{ roles: ReviewRole[] }> {
+  const prompt = buildGenerateReviewRolesPrompt(input);
+  const output = await automationManager.runCodexUtility({
+    runId: `role_generate_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    cwd: input.cwd,
+    prompt,
+    timeoutMs: input.timeoutMs
+  });
+  if (output.exitCode !== 0) {
+    throw new CCAgentError("CCAGENT_ROLE_GENERATE_FAILED", `Codex role generation exited with code ${output.exitCode}`);
+  }
+  const now = new Date().toISOString();
+  const parsed = parseGeneratedRoles(output.content);
+  return {
+    roles: parsed.map((role) =>
+      ReviewRoleSchema.parse({
+        ...role,
+        source: "generated",
+        createdAt: role.createdAt ?? now,
+        updatedAt: role.updatedAt ?? now
+      })
+    )
+  };
+}
+
+function buildGenerateReviewRolesPrompt(input: { cwd: string; file: string; requestedFile?: string; language?: string }): string {
+  return [
+    "Generate review roles for a CCAgent role-based group review workflow.",
+    "",
+    `Workspace root: ${input.cwd}`,
+    `Target document: ${input.file}`,
+    input.requestedFile && input.requestedFile !== input.file ? `Requested target document: ${input.requestedFile}` : "",
+    `Language: ${input.language ?? "Chinese"}`,
+    "",
+    "Read the target document and inspect surrounding workspace context when useful.",
+    "Do not modify any file and do not start review.",
+    "Return JSON only with this shape:",
+    "{",
+    '  "roles": [',
+    "    {",
+    '      "id": "stable-kebab-id",',
+    '      "name": "角色名称",',
+    '      "description": "why this role matters",',
+    '      "prompt": "role responsibility and boundary",',
+    '      "focusAreas": ["area"],',
+    '      "outputInstructions": "role-specific output format",',
+    '      "defaultSelected": true',
+    "    }",
+    "  ]",
+    "}",
+    "",
+    "Do not include suggestedProviderIds."
+  ].filter(Boolean).join("\n");
+}
+
+function parseGeneratedRoles(content: string): Array<Partial<ReviewRole>> {
+  const direct = tryParseJson(content);
+  if (direct && Array.isArray(direct.roles)) {
+    return direct.roles as Array<Partial<ReviewRole>>;
+  }
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    const parsed = tryParseJson(fenced[1]);
+    if (parsed && Array.isArray(parsed.roles)) {
+      return parsed.roles as Array<Partial<ReviewRole>>;
+    }
+  }
+  throw new CCAgentError("CCAGENT_ROLE_GENERATE_PARSE_FAILED", "Codex did not return role JSON");
+}
+
+function tryParseJson(content: string): { roles?: unknown } | undefined {
+  try {
+    return JSON.parse(content) as { roles?: unknown };
+  } catch {
+    return undefined;
   }
 }
 

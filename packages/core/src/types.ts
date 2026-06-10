@@ -73,9 +73,23 @@ export interface ReviewBatchRequest {
   reviewers: Array<{
     provider: string;
     model?: string;
+    roleIds?: string[];
   }>;
   timeoutMs?: number;
   maxOutputBytes?: number;
+}
+
+export interface ReviewRole {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  focusAreas: string[];
+  outputInstructions: string;
+  defaultSelected: boolean;
+  source: "global" | "generated";
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PromptTemplate {
@@ -97,7 +111,9 @@ export interface AutomationRunRequest {
   reviewers: Array<{
     provider: string;
     model?: string;
+    roleIds?: string[];
   }>;
+  roles?: ReviewRole[];
   claudeTemplateId: string;
   codexTemplateId: string;
   reviewStyle?: ReviewStyle;
@@ -138,6 +154,7 @@ export interface AutomationRunProviderRecord {
   runId: string;
   provider: string;
   model?: string;
+  roleIds?: string[];
   taskId?: string;
   status: AutomationProviderStatus;
   errorJson?: string;

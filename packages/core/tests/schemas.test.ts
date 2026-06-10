@@ -3,6 +3,7 @@ import {
   AutomationRunRequestSchema,
   ErrorCodes,
   PromptTemplateSchema,
+  ReviewRoleSchema,
   ReviewFileRequestSchema,
   RunTaskRequestSchema
 } from "../src/index.js";
@@ -90,6 +91,66 @@ describe("core schemas", () => {
         maxIterations: 0
       })
     ).toThrow();
+  });
+
+  test("review role schema accepts reusable global and generated roles", () => {
+    const parsed = ReviewRoleSchema.parse({
+      id: "document-structure",
+      name: "文档结构审查员",
+      description: "检查章节结构和读者路径。",
+      prompt: "你负责检查文档结构。",
+      focusAreas: ["章节结构", "重复内容"],
+      outputInstructions: "按角色分段输出。",
+      defaultSelected: true,
+      source: "global",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z"
+    });
+
+    expect(parsed).toMatchObject({
+      id: "document-structure",
+      source: "global",
+      defaultSelected: true
+    });
+    expect(() =>
+      ReviewRoleSchema.parse({
+        ...parsed,
+        id: "../bad"
+      })
+    ).toThrow();
+    expect(() =>
+      ReviewRoleSchema.parse({
+        ...parsed,
+        source: "project"
+      })
+    ).toThrow();
+  });
+
+  test("automation run request can carry reviewer role ids and role snapshots", () => {
+    const parsed = AutomationRunRequestSchema.parse({
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm", roleIds: ["document-structure", "fact-consistency"] }],
+      roles: [
+        {
+          id: "document-structure",
+          name: "文档结构审查员",
+          description: "检查结构。",
+          prompt: "检查结构。",
+          focusAreas: ["结构"],
+          outputInstructions: "分段输出。",
+          defaultSelected: true,
+          source: "global",
+          createdAt: "2026-06-10T10:00:00.000Z",
+          updatedAt: "2026-06-10T10:00:00.000Z"
+        }
+      ],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit"
+    });
+
+    expect(parsed.reviewers[0].roleIds).toEqual(["document-structure", "fact-consistency"]);
+    expect(parsed.roles?.[0].name).toBe("文档结构审查员");
   });
 
   test("prompt template schema requires known template kind", () => {

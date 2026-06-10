@@ -6,6 +6,7 @@ export const migrations = [
   "CREATE TABLE review_batches",
   "CREATE TABLE review_batch_tasks",
   "CREATE TABLE prompt_templates",
+  "CREATE TABLE review_roles",
   "CREATE TABLE automation_runs",
   "CREATE TABLE automation_run_providers",
   "CREATE TABLE codex_edit_tasks"

@@ -3,6 +3,7 @@ import type {
   AutomationRunRequest,
   PromptTemplate,
   ProviderConfig,
+  ReviewRole,
   TaskStatus
 } from "@ccagent/core";
 
@@ -23,6 +24,11 @@ export interface GuiTaskRecord {
 
 export interface GuiApi {
   listProviders(): Promise<ProviderConfig[]>;
+  listReviewRoles(): Promise<ReviewRole[]>;
+  saveReviewRole(role: ReviewRole): Promise<ReviewRole>;
+  deleteReviewRole(roleId: string): Promise<unknown>;
+  generateReviewRoles(request: { cwd: string; file: string; language?: string }): Promise<{ roles: ReviewRole[] }>;
+  promoteReviewRole(role: ReviewRole): Promise<ReviewRole>;
   saveProvider(provider: ProviderConfig, apiKey?: string): Promise<ProviderConfig>;
   deleteProvider(providerId: string): Promise<unknown>;
   testProvider(provider: string, model?: string): Promise<unknown>;

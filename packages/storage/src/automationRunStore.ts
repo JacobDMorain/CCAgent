@@ -313,10 +313,11 @@ export class SqliteAutomationRunStore {
     this.database.handle
       .prepare(
         `INSERT INTO automation_run_providers
-          (run_id, provider, model, task_id, status, error_json, output_path, position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (run_id, provider, model, role_ids_json, task_id, status, error_json, output_path, position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(run_id, provider) DO UPDATE SET
           model = excluded.model,
+          role_ids_json = excluded.role_ids_json,
           task_id = excluded.task_id,
           status = excluded.status,
           error_json = excluded.error_json,
@@ -327,6 +328,7 @@ export class SqliteAutomationRunStore {
         provider.runId,
         provider.provider,
         provider.model ?? null,
+        provider.roleIds ? JSON.stringify(provider.roleIds) : null,
         provider.taskId ?? null,
         provider.status,
         provider.errorJson ?? null,
@@ -427,6 +429,7 @@ interface SqliteAutomationRunProviderRow {
   run_id: string;
   provider: string;
   model: string | null;
+  role_ids_json: string | null;
   task_id: string | null;
   status: string;
   error_json: string | null;
@@ -450,6 +453,7 @@ function sqliteProviderToRecord(row: SqliteAutomationRunProviderRow): Automation
     runId: row.run_id,
     provider: row.provider,
     model: row.model ?? undefined,
+    roleIds: parseStringArray(row.role_ids_json),
     taskId: row.task_id ?? undefined,
     status: row.status as AutomationRunProviderRecord["status"],
     errorJson: row.error_json ?? undefined,
@@ -520,7 +524,7 @@ function cloneRun(run: AutomationRunRecord): AutomationRunRecord {
 }
 
 function cloneProvider(provider: AutomationRunProviderRecord): AutomationRunProviderRecord {
-  return { ...provider };
+  return { ...provider, roleIds: provider.roleIds ? [...provider.roleIds] : undefined };
 }
 
 function cloneIteration(iteration: AutomationRunIterationRecord): AutomationRunIterationRecord {

@@ -3,6 +3,7 @@ export * from "./migrations.js";
 export * from "./automationRunStore.js";
 export * from "./promptTemplateStore.js";
 export * from "./providerStore.js";
+export * from "./reviewRoleStore.js";
 export * from "./reviewBatchStore.js";
 export * from "./settingsStore.js";
 export * from "./taskStore.js";

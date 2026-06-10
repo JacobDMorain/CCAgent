@@ -1,10 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ProviderConfig } from "@ccagent/core";
+import type { ProviderConfig, ReviewRole } from "@ccagent/core";
 
 interface AutomationRunRequest {
   cwd: string;
   file: string;
-  reviewers: Array<{ provider: string; model?: string }>;
+  reviewers: Array<{ provider: string; model?: string; roleIds?: string[] }>;
+  roles?: ReviewRole[];
   claudeTemplateId: string;
   codexTemplateId: string;
   reviewStyle?: string;
@@ -30,6 +31,11 @@ interface PromptTemplate {
 
 interface GuiApi {
   listProviders(): Promise<ProviderConfig[]>;
+  listReviewRoles(): Promise<ReviewRole[]>;
+  saveReviewRole(role: ReviewRole): Promise<ReviewRole>;
+  deleteReviewRole(roleId: string): Promise<unknown>;
+  generateReviewRoles(request: { cwd: string; file: string; language?: string }): Promise<{ roles: ReviewRole[] }>;
+  promoteReviewRole(role: ReviewRole): Promise<ReviewRole>;
   saveProvider(provider: ProviderConfig, apiKey?: string): Promise<ProviderConfig>;
   deleteProvider(providerId: string): Promise<unknown>;
   testProvider(provider: string, model?: string): Promise<unknown>;
@@ -60,6 +66,11 @@ interface GuiApi {
 
 const api: GuiApi = {
   listProviders: () => ipcRenderer.invoke("ccagent:listProviders"),
+  listReviewRoles: () => ipcRenderer.invoke("ccagent:listReviewRoles"),
+  saveReviewRole: (role: ReviewRole) => ipcRenderer.invoke("ccagent:saveReviewRole", role),
+  deleteReviewRole: (roleId: string) => ipcRenderer.invoke("ccagent:deleteReviewRole", roleId),
+  generateReviewRoles: (request) => ipcRenderer.invoke("ccagent:generateReviewRoles", request),
+  promoteReviewRole: (role: ReviewRole) => ipcRenderer.invoke("ccagent:promoteReviewRole", role),
   saveProvider: (provider: ProviderConfig, apiKey?: string) =>
     ipcRenderer.invoke("ccagent:saveProvider", provider, apiKey),
   deleteProvider: (providerId: string) => ipcRenderer.invoke("ccagent:deleteProvider", providerId),

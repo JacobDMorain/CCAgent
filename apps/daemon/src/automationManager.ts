@@ -6,16 +6,19 @@ import {
   AutomationRunRequestSchema,
   CCAgentError,
   createDefaultPromptTemplates,
+  createBuiltInReviewRoles,
   ErrorCodes,
   renderPromptTemplate,
   type AutomationRunRecord,
   type AutomationRunRequest,
   type PromptTemplate,
+  type ReviewRole,
   type TaskResult
 } from "@ccagent/core";
 import {
   SqliteAutomationRunStore,
   SqlitePromptTemplateStore,
+  SqliteReviewRoleStore,
   SqliteTaskStore
 } from "@ccagent/storage";
 import type { DaemonSettings } from "@ccagent/core";
@@ -52,6 +55,7 @@ export class AutomationManager {
     private readonly taskStore: SqliteTaskStore,
     private readonly runStore: SqliteAutomationRunStore,
     private readonly templateStore: SqlitePromptTemplateStore,
+    private readonly reviewRoleStore?: SqliteReviewRoleStore,
     orchestration: Partial<AutomationOrchestration> = {}
   ) {
     this.orchestration = {
@@ -59,6 +63,7 @@ export class AutomationManager {
       ...orchestration
     };
     this.seedDefaultTemplates();
+    this.seedDefaultReviewRoles();
   }
 
   private readonly orchestration: AutomationOrchestration;
@@ -74,9 +79,12 @@ export class AutomationManager {
       runId,
       provider: reviewer.provider,
       model: reviewer.model,
+      roleIds: reviewer.roleIds,
       status: "queued" as const,
       position
     }));
+    const selectedRoles = resolveSelectedRoles(request.roles, request.reviewers, this.reviewRoleStore);
+    const selectedRoleIds = new Set(selectedRoles.map((role) => role.id));
     mkdirSync(outputDir, { recursive: true });
     mkdirSync(join(outputDir, "providers"), { recursive: true });
     writeJsonFile(join(outputDir, "input.json"), {
@@ -84,6 +92,7 @@ export class AutomationManager {
       targetFile,
       cwd,
       reviewers: request.reviewers,
+      roles: request.roles,
       claudeTemplateId: request.claudeTemplateId,
       codexTemplateId: request.codexTemplateId,
       reviewStyle: request.reviewStyle,
@@ -91,6 +100,13 @@ export class AutomationManager {
       fullyAuto: request.fullyAuto,
       maxIterations: request.maxIterations,
       createdAt: now
+    });
+    writeJsonFile(join(outputDir, "roles.json"), {
+      selectedRoles,
+      generatedRoles: (request.roles ?? []).filter((role) => role.source === "generated"),
+      generatedButNotSelectedRoles: (request.roles ?? []).filter(
+        (role) => role.source === "generated" && !selectedRoleIds.has(role.id)
+      )
     });
 
     const run = this.runStore.createRun({
@@ -118,6 +134,24 @@ export class AutomationManager {
     });
 
     return run;
+  }
+
+  async runCodexUtility(input: {
+    runId: string;
+    cwd: string;
+    prompt: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }): Promise<CodexRunOutput> {
+    return this.orchestration.runCodex({
+      runId: input.runId,
+      cwd: input.cwd,
+      prompt: input.prompt,
+      timeoutMs: input.timeoutMs,
+      onStdout: () => undefined,
+      onStderr: () => undefined,
+      signal: input.signal
+    });
   }
 
   listRuns(limit = 100): AutomationRunRecord[] {
@@ -375,7 +409,8 @@ export class AutomationManager {
           workspaceRoot: run.cwd,
           provider: reviewer.provider,
           reviewStyle: request.reviewStyle,
-          language: request.language ?? "Chinese"
+          language: request.language ?? "Chinese",
+          roleTeam: formatRoleTeam(resolveReviewerRoles(reviewer.roleIds, request.roles, this.reviewRoleStore))
         });
         const result = await this.taskManager.runTask({
           provider: reviewer.provider,
@@ -689,6 +724,7 @@ export class AutomationManager {
   private writeReviewPacket(runId: string, outputBaseDir?: string, iteration?: number): string {
     const run = this.getRun(runId);
     const packetPath = join(outputBaseDir ?? run.outputDir, "review-packet.md");
+    const roleSnapshot = readRoleSnapshot(join(run.outputDir, "roles.json"));
     const sections = [
       `# CCAgent Review Packet`,
       ``,
@@ -706,9 +742,10 @@ export class AutomationManager {
           ``,
           `Status: ${provider.status}`,
           provider.model ? `Model: ${provider.model}` : "",
+          provider.roleIds?.length ? `Roles: ${provider.roleIds.join(", ")}` : "",
           provider.taskId ? `Task: ${provider.taskId}` : "",
           ``,
-          content
+          formatProviderPacketContent(content, resolveReviewerRoles(provider.roleIds, roleSnapshot, this.reviewRoleStore))
         ].filter(Boolean).join("\n");
       })
     ];
@@ -771,6 +808,17 @@ export class AutomationManager {
     }
   }
 
+  private seedDefaultReviewRoles(): void {
+    if (!this.reviewRoleStore) {
+      return;
+    }
+    for (const role of createBuiltInReviewRoles()) {
+      if (!this.reviewRoleStore.getRole(role.id)) {
+        this.reviewRoleStore.saveRole(role);
+      }
+    }
+  }
+
   private requiredTemplate(id: string, kind: PromptTemplate["kind"]): PromptTemplate {
     const template = this.templateStore.getTemplate(id);
     if (!template || template.kind !== kind) {
@@ -812,6 +860,99 @@ function providerStatusFromTask(status: TaskResult["status"]) {
     return "cancelled";
   }
   return "failed";
+}
+
+function resolveSelectedRoles(
+  requestRoles: ReviewRole[] | undefined,
+  reviewers: AutomationRunRequest["reviewers"],
+  store: SqliteReviewRoleStore | undefined
+): ReviewRole[] {
+  const selectedIds = new Set(reviewers.flatMap((reviewer) => reviewer.roleIds ?? []));
+  if (selectedIds.size === 0) {
+    return [];
+  }
+  const byId = new Map<string, ReviewRole>();
+  for (const role of requestRoles ?? []) {
+    byId.set(role.id, role);
+  }
+  if (store) {
+    for (const role of store.listRoles()) {
+      if (!byId.has(role.id)) {
+        byId.set(role.id, role);
+      }
+    }
+  }
+  return [...selectedIds]
+    .map((id) => byId.get(id))
+    .filter((role): role is ReviewRole => Boolean(role));
+}
+
+function resolveReviewerRoles(
+  roleIds: string[] | undefined,
+  requestRoles: ReviewRole[] | undefined,
+  store: SqliteReviewRoleStore | undefined
+): ReviewRole[] {
+  const ids = roleIds ?? [];
+  if (ids.length === 0) {
+    return [];
+  }
+  const requestById = new Map((requestRoles ?? []).map((role) => [role.id, role]));
+  return ids
+    .map((id) => requestById.get(id) ?? store?.getRole(id))
+    .filter((role): role is ReviewRole => Boolean(role));
+}
+
+function readRoleSnapshot(path: string): ReviewRole[] | undefined {
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { selectedRoles?: ReviewRole[] };
+    return Array.isArray(parsed.selectedRoles) ? parsed.selectedRoles : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatRoleTeam(roles: ReviewRole[]): string {
+  if (roles.length === 0) {
+    return "No explicit roles were selected. Use the default general reviewer perspective.";
+  }
+  return roles.map((role, index) => [
+    `${index + 1}. ${role.name}`,
+    `Description: ${role.description}`,
+    "Focus areas:",
+    ...role.focusAreas.map((area) => `- ${area}`),
+    "Role prompt:",
+    role.prompt,
+    "Output instructions:",
+    role.outputInstructions
+  ].join("\n")).join("\n\n");
+}
+
+function formatProviderPacketContent(content: string, roles: ReviewRole[]): string {
+  if (roles.length === 0) {
+    return content;
+  }
+  const sections = roles.map((role) => {
+    const extracted = extractRoleSection(content, role.name);
+    return [
+      `### Role: ${role.name}`,
+      "",
+      extracted || "Provider did not return a clearly separated section for this role."
+    ].join("\n");
+  });
+  return sections.join("\n\n");
+}
+
+function extractRoleSection(content: string, roleName: string): string {
+  const escaped = escapeRegExp(roleName);
+  const match = content.match(new RegExp(`^##\\s+Role:\\s*${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+Role:|$)`, "im"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function captureTargetDocumentDiff(cwd: string, targetFile: string, before: string | undefined): string {

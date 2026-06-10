@@ -1,9 +1,10 @@
-import { ProviderConfigSchema, type ProviderConfig } from "@ccagent/core";
+import { ProviderConfigSchema, ReviewRoleSchema, type ProviderConfig, type ReviewRole } from "@ccagent/core";
 
 interface GuiAutomationRunRequest {
   cwd: string;
   file: string;
-  reviewers: Array<{ provider: string; model?: string }>;
+  reviewers: Array<{ provider: string; model?: string; roleIds?: string[] }>;
+  roles?: ReviewRole[];
   claudeTemplateId: string;
   codexTemplateId: string;
   reviewStyle?: string;
@@ -36,6 +37,22 @@ export interface GuiDaemonClientLike {
 export function createGuiApiHandlers(daemon: GuiDaemonClientLike) {
   return {
     listProviders: () => daemon.get("/providers") as Promise<ProviderConfig[]>,
+
+    listReviewRoles: () => daemon.get("/review-roles") as Promise<ReviewRole[]>,
+
+    saveReviewRole: (roleInput: ReviewRole) => {
+      const role = ReviewRoleSchema.parse(roleInput);
+      return daemon.post("/review-roles", role) as Promise<ReviewRole>;
+    },
+
+    deleteReviewRole: (roleId: string) =>
+      daemon.delete(`/review-roles/${encodeURIComponent(roleId)}`),
+
+    generateReviewRoles: (request: { cwd: string; file: string; language?: string }) =>
+      daemon.post("/review-roles/generate", request) as Promise<{ roles: ReviewRole[] }>,
+
+    promoteReviewRole: (role: ReviewRole) =>
+      daemon.post("/review-roles/promote", { role }) as Promise<ReviewRole>,
 
     async saveProvider(providerInput: ProviderConfig, apiKey?: string): Promise<ProviderConfig> {
       const provider = ProviderConfigSchema.parse(providerInput);

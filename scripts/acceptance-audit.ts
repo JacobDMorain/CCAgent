@@ -251,15 +251,15 @@ const finalAcceptance: ItemSpec[] = [
       },
       {
         file: "apps/gui/src/renderer/routes/ReviewWorkspacePage.tsx",
-        contains: ["Start fully automatic run", "claudeTemplateId", "codexTemplateId"]
+        contains: ["startFullyAutomaticRun", "claudeTemplateId", "codexTemplateId"]
       },
       {
         file: "apps/gui/src/renderer/routes/RunsPage.tsx",
-        contains: ["Rerun", "providerSummary"]
+        contains: ["providerSummary", "onShowStatus", "onReadOutput", "onDelete"]
       },
       {
         file: "apps/gui/src/renderer/App.tsx",
-        contains: ["Codex CLI path", "saveRuntimeSettings"]
+        contains: ["codexCliPath", "saveRuntimeSettings"]
       }
     ]
   }

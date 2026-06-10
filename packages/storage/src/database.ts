@@ -4,7 +4,8 @@ import type {
   AutomationRunProviderRecord,
   AutomationRunRecord,
   CodexEditTaskRecord,
-  PromptTemplate
+  PromptTemplate,
+  ReviewRole
 } from "@ccagent/core";
 
 const require = createRequire(import.meta.url);
@@ -23,6 +24,7 @@ export class MemoryDatabase implements CCAgentDatabase {
   readonly reviewBatches = new Map<string, StoredReviewBatchRow>();
   readonly reviewBatchTasks: StoredReviewBatchTaskRow[] = [];
   readonly promptTemplates = new Map<string, PromptTemplate>();
+  readonly reviewRoles = new Map<string, ReviewRole>();
   readonly automationRuns = new Map<string, Omit<AutomationRunRecord, "providers" | "codexTask" | "iterations">>();
   readonly automationRunProviders: AutomationRunProviderRecord[] = [];
   readonly automationRunIterations: AutomationRunIterationRecord[] = [];
@@ -131,6 +133,13 @@ export class SqliteDatabase implements CCAgentDatabase {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS review_roles (
+        id TEXT PRIMARY KEY,
+        json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS automation_runs (
         id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -158,6 +167,7 @@ export class SqliteDatabase implements CCAgentDatabase {
         run_id TEXT NOT NULL,
         provider TEXT NOT NULL,
         model TEXT,
+        role_ids_json TEXT,
         task_id TEXT,
         status TEXT NOT NULL,
         error_json TEXT,
@@ -215,6 +225,11 @@ export class SqliteDatabase implements CCAgentDatabase {
       } catch {
         // Column already exists on databases created after Codex decision protocol support.
       }
+    }
+    try {
+      this.handle.exec("ALTER TABLE automation_run_providers ADD COLUMN role_ids_json TEXT");
+    } catch {
+      // Column already exists on databases created after role-aware automation support.
     }
   }
 }

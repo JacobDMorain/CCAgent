@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AutomationRunRecord, PromptTemplate, ProviderConfig } from "@ccagent/core";
+import type { AutomationRunRecord, PromptTemplate, ProviderConfig, ReviewRole } from "@ccagent/core";
 import { ProvidersPage } from "./routes/ProvidersPage.js";
+import { ReviewRolesPage } from "./routes/ReviewRolesPage.js";
 import { ReviewWorkspacePage } from "./routes/ReviewWorkspacePage.js";
 import { RunsPage } from "./routes/RunsPage.js";
 import { TemplatesPage } from "./routes/TemplatesPage.js";
@@ -17,6 +18,7 @@ import type { GuiApi, GuiTaskRecord } from "./types.js";
 
 export interface AppProps {
   initialProviders?: ProviderConfig[];
+  initialReviewRoles?: ReviewRole[];
   initialTasks?: GuiTaskRecord[];
   initialRuns?: AutomationRunRecord[];
   initialTemplates?: PromptTemplate[];
@@ -27,6 +29,7 @@ export interface AppProps {
 
 export function App({
   initialProviders = [],
+  initialReviewRoles = [],
   initialTasks = [],
   initialRuns = [],
   initialTemplates = [],
@@ -46,6 +49,8 @@ export function App({
   });
   const t = useMemo(() => createTranslator(locale), [locale]);
   const [providers, setProviders] = useState(initialProviders);
+  const [reviewRoles, setReviewRoles] = useState(initialReviewRoles);
+  const [generatedRoles, setGeneratedRoles] = useState<ReviewRole[]>([]);
   const [tasks, setTasks] = useState(initialTasks);
   const [runs, setRuns] = useState(initialRuns);
   const [templates, setTemplates] = useState(initialTemplates);
@@ -72,6 +77,7 @@ export function App({
     }
 
     void refreshProviders(api, setProviders, setSelectedProviderId, setRuntimeError);
+    void refreshReviewRoles(api, setReviewRoles, setRuntimeError);
     void refreshTasks(api, setTasks, setRuntimeError);
     void refreshTemplates(api, setTemplates, setRuntimeError);
     void refreshRuns(api, setRuns, setRuntimeError);
@@ -99,6 +105,7 @@ export function App({
       <nav className="sidebar" aria-label="Primary">
         <h1>CCAgent</h1>
         <a href="#review-workspace">{t("navReviewWorkspace")}</a>
+        <a href="#review-roles">{t("navReviewRoles")}</a>
         <a href="#providers">{t("navProviders")}</a>
         <a href="#templates">{t("navTemplates")}</a>
         <a href="#runs">{t("navRuns")}</a>
@@ -121,6 +128,29 @@ export function App({
           t={t}
           providers={providers}
           templates={visibleTemplates}
+          globalRoles={reviewRoles}
+          generatedRoles={generatedRoles}
+          onGenerateRoles={async (request) => {
+            if (!api) {
+              return;
+            }
+            await runAction(setRuntimeError, setStatusMessage, t("generatingReviewRoles"), async () => {
+              const result = await api.generateReviewRoles(request);
+              setGeneratedRoles(result.roles);
+              return t("generatedReviewRoles", { count: result.roles.length });
+            });
+          }}
+          onPromoteGeneratedRole={async (role) => {
+            if (!api) {
+              return;
+            }
+            await runAction(setRuntimeError, setStatusMessage, t("promotingReviewRole", { id: role.id }), async () => {
+              const saved = await api.promoteReviewRole(role);
+              setReviewRoles((current) => upsertRole(current, saved));
+              setGeneratedRoles((current) => current.filter((item) => item.id !== role.id));
+              return t("promotedReviewRole", { id: saved.id });
+            });
+          }}
           onStart={async (request) => {
             if (!api) {
               return;
@@ -134,6 +164,30 @@ export function App({
               const run = await api.createAutomationRun(request);
               setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
               return t("startedAutomationRun", { id: run.id });
+            });
+          }}
+        />
+        <ReviewRolesPage
+          t={t}
+          roles={reviewRoles}
+          onSave={async (role) => {
+            if (!api) {
+              return;
+            }
+            await runAction(setRuntimeError, setStatusMessage, t("savingReviewRole", { id: role.id }), async () => {
+              const saved = await api.saveReviewRole(role);
+              setReviewRoles((current) => upsertRole(current, saved));
+              return t("savedReviewRole", { id: saved.id });
+            });
+          }}
+          onDelete={async (roleId) => {
+            if (!api) {
+              return;
+            }
+            await runAction(setRuntimeError, setStatusMessage, t("deletingReviewRole", { id: roleId }), async () => {
+              await api.deleteReviewRole(roleId);
+              setReviewRoles((current) => current.filter((role) => role.id !== roleId));
+              return t("deletedReviewRole", { id: roleId });
             });
           }}
         />
@@ -402,6 +456,19 @@ async function refreshProviders(
   }
 }
 
+async function refreshReviewRoles(
+  api: GuiApi,
+  setReviewRoles: (roles: ReviewRole[]) => void,
+  setRuntimeError: (error: { code: string; message: string } | undefined) => void
+): Promise<void> {
+  try {
+    setReviewRoles(await api.listReviewRoles());
+    setRuntimeError(undefined);
+  } catch (error) {
+    setRuntimeError(toRuntimeError(error));
+  }
+}
+
 async function refreshTasks(
   api: GuiApi,
   setTasks: (tasks: GuiTaskRecord[]) => void,
@@ -478,4 +545,12 @@ async function runAction(
 
 function isTemplateVisibleForLocale(templateId: string, locale: Locale): boolean {
   return locale === "zh" ? templateId.endsWith("-zh") : !templateId.endsWith("-zh");
+}
+
+function upsertRole(roles: ReviewRole[], next: ReviewRole): ReviewRole[] {
+  const existing = roles.findIndex((role) => role.id === next.id);
+  if (existing === -1) {
+    return [...roles, next];
+  }
+  return roles.map((role) => role.id === next.id ? next : role);
 }

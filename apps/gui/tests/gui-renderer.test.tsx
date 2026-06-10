@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { ProviderConfig } from "@ccagent/core";
+import type { AutomationRunRequest, ProviderConfig, ReviewRole } from "@ccagent/core";
 import { App } from "../src/renderer/App.js";
 import { ProviderForm } from "../src/renderer/components/ProviderForm.js";
 import { TaskTable } from "../src/renderer/components/TaskTable.js";
+import { ReviewWorkspacePage } from "../src/renderer/routes/ReviewWorkspacePage.js";
 import { RunsPage } from "../src/renderer/routes/RunsPage.js";
 import { createTranslator } from "../src/renderer/i18n.js";
 
@@ -103,6 +104,7 @@ describe("GUI renderer", () => {
     const html = renderToStaticMarkup(
       <App
         initialProviders={[providerFixture]}
+        initialReviewRoles={[roleFixture]}
         initialTasks={[]}
         initialTemplates={[
           {
@@ -171,12 +173,16 @@ describe("GUI renderer", () => {
     );
 
     expect(html).toContain("Review Workspace");
+    expect(html).toContain("Review Roles");
     expect(html).toContain("Providers");
     expect(html).toContain("New provider");
     expect(html).toContain("Delete provider");
     expect(html).toContain("Prompt Templates");
     expect(html).toContain("Runs");
     expect(html).toContain("Start fully automatic run");
+    expect(html).toContain("Global Roles");
+    expect(html).toContain("Generate roles from document");
+    expect(html).toContain("文档结构审查员");
     expect(html).toContain("Max iterations");
     expect(html).toContain("Iterations");
     expect(html).toContain("1 / 3 stopped");
@@ -199,6 +205,7 @@ describe("GUI renderer", () => {
       <App
         initialLocale="zh"
         initialProviders={[providerFixture]}
+        initialReviewRoles={[roleFixture]}
         initialTasks={[]}
         initialTemplates={[
           {
@@ -254,9 +261,11 @@ describe("GUI renderer", () => {
     );
 
     expect(html).toContain("评审工作区");
+    expect(html).toContain("评审角色");
     expect(html).toContain("服务商");
     expect(html).toContain("提示词模板");
     expect(html).toContain("启动全自动流程");
+    expect(html).toContain("全局角色");
     expect(html).toContain("最大迭代轮次");
     expect(html).toContain("Claude Code CLI 路径");
     expect(html).toContain("就绪");
@@ -264,6 +273,76 @@ describe("GUI renderer", () => {
     expect(html).toContain("Codex 根据评审包修改文档");
     expect(html).not.toContain("Full Claude Review");
     expect(html).not.toContain("Codex Edit From Review Packet");
+  });
+
+  test("ReviewWorkspacePage submits selected role snapshot and role ids per provider", async () => {
+    let submitted: AutomationRunRequest | undefined;
+    const html = renderToStaticMarkup(
+      <ReviewWorkspacePage
+        locale="en"
+        t={createTranslator("en")}
+        providers={[providerFixture]}
+        templates={[
+          {
+            id: "default-claude-review-full",
+            kind: "claude-review",
+            name: "Full Claude Review",
+            description: "Review",
+            version: 1,
+            content: "Review {file}",
+            requiredVariables: ["file"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            id: "default-codex-edit",
+            kind: "codex-edit",
+            name: "Codex Edit From Review Packet",
+            description: "Edit",
+            version: 1,
+            content: "Read {reviewPacket}",
+            requiredVariables: ["reviewPacket"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          }
+        ]}
+        globalRoles={[roleFixture]}
+        generatedRoles={[generatedRoleFixture]}
+        onStart={(request) => {
+          submitted = request;
+        }}
+      />
+    );
+
+    expect(html).toContain("Global Roles");
+    expect(html).toContain("Generated Roles");
+    expect(html).toContain("文档结构审查员");
+    expect(html).toContain("算法一致性审查员");
+
+    const fakeForm = new Map<string, FormDataEntryValue>([
+      ["cwd", "D:/project"],
+      ["file", "docs/handoff.md"],
+      ["claudeTemplateId", "default-claude-review-full"],
+      ["codexTemplateId", "default-codex-edit"],
+      ["reviewStyle", "full"],
+      ["language", "English"],
+      ["maxIterations", "3"],
+      ["provider:glm", "on"],
+      ["role:document-structure", "on"],
+      ["role:algorithm-consistency", "on"]
+    ]);
+    const request = ReviewWorkspacePage.buildRequestFromForm(fakeForm, {
+      providers: [providerFixture],
+      roles: [roleFixture, generatedRoleFixture]
+    });
+    submitted = request;
+
+    expect(submitted.reviewers).toEqual([
+      { provider: "glm", roleIds: ["document-structure", "algorithm-consistency"] }
+    ]);
+    expect(submitted.roles?.map((role) => role.id)).toEqual(["document-structure", "algorithm-consistency"]);
   });
 });
 
@@ -306,4 +385,30 @@ const runFixture = {
   updatedAt: "2026-06-08T10:00:01.000Z",
   providers: [],
   iterations: []
+};
+
+const roleFixture: ReviewRole = {
+  id: "document-structure",
+  name: "文档结构审查员",
+  description: "检查章节结构。",
+  prompt: "你负责检查章节结构。",
+  focusAreas: ["章节结构"],
+  outputInstructions: "按角色分段输出。",
+  defaultSelected: true,
+  source: "global",
+  createdAt: "2026-06-10T10:00:00.000Z",
+  updatedAt: "2026-06-10T10:00:00.000Z"
+};
+
+const generatedRoleFixture: ReviewRole = {
+  id: "algorithm-consistency",
+  name: "算法一致性审查员",
+  description: "检查算法描述和上下文一致性。",
+  prompt: "你负责检查算法一致性。",
+  focusAreas: ["公式", "伪代码"],
+  outputInstructions: "按角色分段输出。",
+  defaultSelected: true,
+  source: "generated",
+  createdAt: "2026-06-10T10:00:00.000Z",
+  updatedAt: "2026-06-10T10:00:00.000Z"
 };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ProviderConfig } from "@ccagent/core";
+import type { ProviderConfig, ReviewRole } from "@ccagent/core";
 import { createGuiApiHandlers, type GuiDaemonClientLike } from "../src/main/ipcHandlers.js";
 
 describe("GUI IPC handlers", () => {
@@ -149,6 +149,35 @@ describe("GUI IPC handlers", () => {
       { method: "DELETE", path: "/prompt-templates/template-1" }
     ]);
   });
+
+  test("review role APIs route through daemon role endpoints", async () => {
+    const daemon = new FakeGuiDaemonClient();
+    daemon.nextGet = [roleFixture];
+    daemon.nextPost = roleFixture;
+    const handlers = createGuiApiHandlers(daemon);
+
+    await handlers.listReviewRoles();
+    await handlers.saveReviewRole(roleFixture);
+    await handlers.generateReviewRoles({ cwd: "D:/project", file: "docs/handoff.md", language: "中文" });
+    await handlers.promoteReviewRole({ ...roleFixture, source: "generated" });
+    await handlers.deleteReviewRole("document-structure");
+
+    expect(daemon.calls).toEqual([
+      { method: "GET", path: "/review-roles" },
+      { method: "POST", path: "/review-roles", body: roleFixture },
+      {
+        method: "POST",
+        path: "/review-roles/generate",
+        body: { cwd: "D:/project", file: "docs/handoff.md", language: "中文" }
+      },
+      {
+        method: "POST",
+        path: "/review-roles/promote",
+        body: { role: { ...roleFixture, source: "generated" } }
+      },
+      { method: "DELETE", path: "/review-roles/document-structure" }
+    ]);
+  });
 });
 
 class FakeGuiDaemonClient implements GuiDaemonClientLike {
@@ -194,4 +223,17 @@ const providerFixture: ProviderConfig = {
   enabled: true,
   createdAt: "2026-06-05T10:00:00.000Z",
   updatedAt: "2026-06-05T10:00:00.000Z"
+};
+
+const roleFixture: ReviewRole = {
+  id: "document-structure",
+  name: "文档结构审查员",
+  description: "检查章节结构。",
+  prompt: "你负责检查章节结构。",
+  focusAreas: ["章节结构"],
+  outputInstructions: "按角色分段输出。",
+  defaultSelected: true,
+  source: "global",
+  createdAt: "2026-06-10T10:00:00.000Z",
+  updatedAt: "2026-06-10T10:00:00.000Z"
 };

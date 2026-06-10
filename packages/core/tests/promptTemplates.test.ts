@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  createBuiltInReviewRoles,
   buildReviewFilePrompt,
   buildRunTaskPrompt,
   createDefaultPromptTemplates,
@@ -88,5 +89,38 @@ describe("prompt templates", () => {
     expect(zhCodexTemplate?.content).toContain("请使用中文输出面向用户的总结");
     expect(zhCodexTemplate?.content).toContain("continue: yes|no");
     expect(zhCodexTemplate?.content).toContain("confidence: high|medium|low");
+  });
+
+  test("built-in review roles seed the default review group", () => {
+    const roles = createBuiltInReviewRoles("2026-06-10T10:00:00.000Z");
+
+    expect(roles.map((role) => role.id)).toEqual([
+      "document-structure",
+      "fact-consistency",
+      "actionability",
+      "risk-opposition",
+      "language-expression"
+    ]);
+    expect(roles.filter((role) => role.defaultSelected).map((role) => role.name)).toEqual([
+      "文档结构审查员",
+      "事实一致性审查员",
+      "可执行性审查员"
+    ]);
+    expect(roles.every((role) => role.source === "global")).toBe(true);
+    expect(roles[0].prompt).toContain("章节结构");
+    expect(roles[0].outputInstructions).toContain("## Role:");
+  });
+
+  test("default Claude review templates expose roleTeam variable", () => {
+    const templates = createDefaultPromptTemplates("2026-06-10T10:00:00.000Z");
+    const claudeTemplate = templates.find((template) => template.id === "default-claude-review-full");
+    const zhClaudeTemplate = templates.find((template) => template.id === "default-claude-review-full-zh");
+
+    expect(claudeTemplate?.requiredVariables).toContain("roleTeam");
+    expect(claudeTemplate?.content).toContain("{roleTeam}");
+    expect(claudeTemplate?.content).toContain("Role team");
+    expect(zhClaudeTemplate?.requiredVariables).toContain("roleTeam");
+    expect(zhClaudeTemplate?.content).toContain("{roleTeam}");
+    expect(zhClaudeTemplate?.content).toContain("角色小组");
   });
 });

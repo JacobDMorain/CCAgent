@@ -94,6 +94,11 @@ function createPendingGuiApiHandlers(): GuiApiHandlers {
 
   return {
     listProviders: async () => (await getHandlers()).listProviders(),
+    listReviewRoles: async () => (await getHandlers()).listReviewRoles(),
+    saveReviewRole: async (role) => (await getHandlers()).saveReviewRole(role),
+    deleteReviewRole: async (roleId) => (await getHandlers()).deleteReviewRole(roleId),
+    generateReviewRoles: async (request) => (await getHandlers()).generateReviewRoles(request),
+    promoteReviewRole: async (role) => (await getHandlers()).promoteReviewRole(role),
     saveProvider: async (provider, apiKey) => (await getHandlers()).saveProvider(provider, apiKey),
     deleteProvider: async (providerId) => (await getHandlers()).deleteProvider(providerId),
     testProvider: async (provider, model) => (await getHandlers()).testProvider(provider, model),
@@ -144,6 +149,13 @@ function getArgValue(name: string): string | undefined {
 
 export function registerIpcHandlers(api: GuiApiHandlers): void {
   ipcMain.handle("ccagent:listProviders", () => api.listProviders());
+  ipcMain.handle("ccagent:listReviewRoles", () => api.listReviewRoles());
+  ipcMain.handle("ccagent:saveReviewRole", (_event, role) => api.saveReviewRole(role));
+  ipcMain.handle("ccagent:deleteReviewRole", (_event, roleId) => api.deleteReviewRole(roleId));
+  ipcMain.handle("ccagent:generateReviewRoles", (_event, request) =>
+    api.generateReviewRoles(request)
+  );
+  ipcMain.handle("ccagent:promoteReviewRole", (_event, role) => api.promoteReviewRole(role));
   ipcMain.handle("ccagent:saveProvider", (_event, provider, apiKey) =>
     api.saveProvider(provider, apiKey)
   );
