@@ -109,6 +109,7 @@ describe("GUI renderer", () => {
             claudeTemplateId: "default-claude-review-full",
             codexTemplateId: "default-codex-edit",
             fullyAuto: true,
+            maxIterations: 3,
             outputDir: "D:/project/.ccagent/runs/run_1",
             createdAt: "2026-06-08T10:00:00.000Z",
             updatedAt: "2026-06-08T10:00:01.000Z",
@@ -119,6 +120,17 @@ describe("GUI renderer", () => {
                 provider: "glm",
                 status: "succeeded",
                 position: 0
+              }
+            ],
+            iterations: [
+              {
+                runId: "run_1",
+                iteration: 1,
+                status: "stopped",
+                changesDetected: false,
+                stopReason: "no remaining actionable changes",
+                startedAt: "2026-06-08T10:00:00.000Z",
+                finishedAt: "2026-06-08T10:00:01.000Z"
               }
             ]
           }
@@ -134,6 +146,9 @@ describe("GUI renderer", () => {
     expect(html).toContain("Prompt Templates");
     expect(html).toContain("Runs");
     expect(html).toContain("Start fully automatic run");
+    expect(html).toContain("Max iterations");
+    expect(html).toContain("Iterations");
+    expect(html).toContain("1 / 3 stopped");
     expect(html).toContain("Full Claude Review");
     expect(html).toContain("run_1");
     expect(html).toContain("Tasks");

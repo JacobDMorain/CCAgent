@@ -34,7 +34,8 @@ export function ReviewWorkspacePage({ providers, templates, onStart }: ReviewWor
             codexTemplateId: stringField(form, "codexTemplateId"),
             reviewStyle: stringField(form, "reviewStyle") as AutomationRunRequest["reviewStyle"],
             language: optionalStringField(form, "language"),
-            fullyAuto: true
+            fullyAuto: true,
+            maxIterations: numberField(form, "maxIterations", 3)
           });
         }}
       >
@@ -76,6 +77,10 @@ export function ReviewWorkspacePage({ providers, templates, onStart }: ReviewWor
             <span>Language</span>
             <input name="language" placeholder="Chinese" />
           </label>
+          <label>
+            <span>Max iterations</span>
+            <input name="maxIterations" type="number" min="1" max="10" defaultValue="3" />
+          </label>
         </div>
         <div className="provider-checks">
           {providers.map((provider) => (
@@ -105,4 +110,9 @@ function stringField(form: FormData, name: string): string {
 function optionalStringField(form: FormData, name: string): string | undefined {
   const value = stringField(form, name);
   return value || undefined;
+}
+
+function numberField(form: FormData, name: string, fallback: number): number {
+  const value = Number(stringField(form, name));
+  return Number.isFinite(value) ? value : fallback;
 }

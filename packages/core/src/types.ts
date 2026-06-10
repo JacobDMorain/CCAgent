@@ -13,6 +13,7 @@ export type AutomationRunStatus =
   | "failed"
   | "cancelled";
 export type AutomationProviderStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+export type AutomationIterationStatus = "running" | "completed" | "stopped" | "failed";
 
 export interface ProviderConfig {
   id: string;
@@ -104,6 +105,7 @@ export interface AutomationRunRequest {
   timeoutMs?: number;
   maxOutputBytes?: number;
   fullyAuto?: boolean;
+  maxIterations?: number;
 }
 
 export interface AutomationRunRecord {
@@ -116,6 +118,7 @@ export interface AutomationRunRecord {
   claudeTemplateId: string;
   codexTemplateId: string;
   fullyAuto: boolean;
+  maxIterations: number;
   outputDir: string;
   reviewPacketPath?: string;
   codexPromptPath?: string;
@@ -128,6 +131,7 @@ export interface AutomationRunRecord {
   finishedAt?: string;
   providers: AutomationRunProviderRecord[];
   codexTask?: CodexEditTaskRecord;
+  iterations: AutomationRunIterationRecord[];
 }
 
 export interface AutomationRunProviderRecord {
@@ -148,6 +152,27 @@ export interface CodexEditTaskRecord {
   promptPath: string;
   outputPath?: string;
   errorJson?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface AutomationRunIterationRecord {
+  runId: string;
+  iteration: number;
+  status: AutomationIterationStatus;
+  reviewPacketPath?: string;
+  codexPromptPath?: string;
+  codexOutputPath?: string;
+  diffPath?: string;
+  decisionSummaryPath?: string;
+  stopDecisionPath?: string;
+  stopReason?: string;
+  changesDetected: boolean;
+  continueRequested?: boolean;
+  codexContinueRequested?: boolean;
+  decisionConfidence?: "high" | "medium" | "low";
+  nextFocus?: string[];
+  riskFlags?: string[];
   startedAt: string;
   finishedAt?: string;
 }

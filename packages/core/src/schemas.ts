@@ -3,6 +3,7 @@ import { z } from "zod";
 const providerIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 const timeoutSchema = z.number().int().min(1000).max(3600000).default(600000);
 const maxOutputBytesSchema = z.number().int().min(1024).max(1048576).default(131072);
+const maxIterationsSchema = z.number().int().min(1).max(10).default(1);
 const reviewStyleSchema = z.enum(["bugs", "architecture", "language", "full"]);
 const reviewBatchReviewerSchema = z.object({
   provider: providerIdSchema,
@@ -93,7 +94,8 @@ export const AutomationRunRequestSchema = z.object({
   language: z.string().min(1).optional(),
   timeoutMs: timeoutSchema,
   maxOutputBytes: maxOutputBytesSchema,
-  fullyAuto: z.boolean().default(true)
+  fullyAuto: z.boolean().default(true),
+  maxIterations: maxIterationsSchema
 });
 
 export const TaskResultSchema = z.object({

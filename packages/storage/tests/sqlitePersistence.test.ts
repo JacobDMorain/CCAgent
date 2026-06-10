@@ -79,6 +79,7 @@ describe("SQLite persistence", () => {
       claudeTemplateId: "default-claude-review-full",
       codexTemplateId: "default-codex-edit",
       fullyAuto: true,
+      maxIterations: 3,
       outputDir: "D:/project/.ccagent/runs/run_persist",
       reviewPacketPath: "D:/project/.ccagent/runs/run_persist/review-packet.md",
       createdAt: "2026-06-08T10:00:00.000Z",
@@ -93,7 +94,24 @@ describe("SQLite persistence", () => {
           status: "succeeded",
           position: 0
         }
-      ]
+      ],
+      iterations: []
+    });
+    runs.upsertIteration({
+      runId: "run_persist",
+      iteration: 1,
+      status: "stopped",
+      reviewPacketPath: "D:/project/.ccagent/runs/run_persist/iterations/iteration-001/review-packet.md",
+      decisionSummaryPath: "D:/project/.ccagent/runs/run_persist/iterations/iteration-001/codex-decision-summary.md",
+      stopReason: "Codex reported no actionable findings",
+      changesDetected: false,
+      continueRequested: false,
+      codexContinueRequested: false,
+      decisionConfidence: "high",
+      nextFocus: ["No follow-up review needed"],
+      riskFlags: [],
+      startedAt: "2026-06-08T10:00:00.000Z",
+      finishedAt: "2026-06-08T10:00:01.000Z"
     });
     first.close();
 
@@ -124,7 +142,17 @@ describe("SQLite persistence", () => {
     expect(reopenedRuns.getRun("run_persist")).toMatchObject({
       id: "run_persist",
       status: "done",
-      providers: [{ provider: "glm", taskId: "task_persist", status: "succeeded" }]
+      maxIterations: 3,
+      providers: [{ provider: "glm", taskId: "task_persist", status: "succeeded" }],
+      iterations: [{
+        iteration: 1,
+        status: "stopped",
+        stopReason: "Codex reported no actionable findings",
+        decisionConfidence: "high",
+        codexContinueRequested: false,
+        nextFocus: ["No follow-up review needed"],
+        riskFlags: []
+      }]
     });
     second.close();
   });

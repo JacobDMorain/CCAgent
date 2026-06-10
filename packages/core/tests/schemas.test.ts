@@ -64,8 +64,32 @@ describe("core schemas", () => {
 
     expect(parsed.reviewStyle).toBe("full");
     expect(parsed.fullyAuto).toBe(true);
+    expect(parsed.maxIterations).toBe(1);
     expect(parsed.timeoutMs).toBe(600000);
     expect(parsed.maxOutputBytes).toBe(131072);
+  });
+
+  test("automation run request accepts bounded iterative review count", () => {
+    const parsed = AutomationRunRequestSchema.parse({
+      cwd: "D:/project",
+      file: "docs/handoff.md",
+      reviewers: [{ provider: "glm" }],
+      claudeTemplateId: "default-claude-review-full",
+      codexTemplateId: "default-codex-edit",
+      maxIterations: 3
+    });
+
+    expect(parsed.maxIterations).toBe(3);
+    expect(() =>
+      AutomationRunRequestSchema.parse({
+        cwd: "D:/project",
+        file: "docs/handoff.md",
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 0
+      })
+    ).toThrow();
   });
 
   test("prompt template schema requires known template kind", () => {

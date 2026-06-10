@@ -1259,9 +1259,338 @@ describe("daemon API", () => {
       expect(summaryPrompt).toContain("diff.patch");
       expect(diff).toContain("Target document snapshot diff");
       expect(diff).toContain("test.md");
+      expect(diff).toContain("@@ -1,1 +1,1 @@");
       expect(diff).toContain("-# Before");
       expect(diff).toContain("+# After");
       expect(diff).not.toContain("other.md");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run iterates provider review until Codex reports no remaining actionable changes", async () => {
+    const root = join(tmpdir(), `ccagent-iterative-run-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    const reviewedContents: string[] = [];
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Draft\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => {
+            reviewedContents.push(readFileSync(targetPath, "utf8"));
+            return { content: `provider review saw ${reviewedContents.at(-1)}`, raw: "{}" };
+          },
+          allocatePort: async () => ({ port: 41013, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# Improved once\n", "utf8");
+              return { exitCode: 0, content: "edited iteration 1" };
+            }
+            if (codexCalls === 2) {
+              return {
+                exitCode: 0,
+                content: [
+                  "## Applied",
+                  "- Improved the title.",
+                  "",
+                  "## Continue Decision",
+                  "continue: yes",
+                  "reason: review the improved document once more",
+                  "confidence: medium",
+                  "next_focus:",
+                  "- Verify the updated title does not create duplicate wording.",
+                  "risk_flags:",
+                  "- changed-target-document"
+                ].join("\n")
+              };
+            }
+            if (codexCalls === 3) {
+              return { exitCode: 0, content: "no further edits" };
+            }
+            return {
+              exitCode: 0,
+              content: "## Applied\n- None.\n\n## Continue Decision\ncontinue: no\nreason: no remaining actionable changes"
+            };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 3
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+
+      expect(codexCalls).toBe(4);
+      expect(reviewedContents).toEqual(["# Draft\n", "# Improved once\n"]);
+      expect(completed.iterations).toEqual([
+        expect.objectContaining({ iteration: 1, status: "completed", changesDetected: true, continueRequested: true }),
+        expect.objectContaining({ iteration: 2, status: "stopped", changesDetected: false, continueRequested: false })
+      ]);
+      const output = (await client.get(`/automation-runs/${run.id}/output?maxBytes=20000`)) as any;
+      expect(output.content).toContain("iteration-001/codex-decision-summary.md");
+      expect(output.content).toContain("iteration-002/codex-decision-summary.md");
+      expect(output.content).toContain("reason=no remaining actionable changes");
+      expect(completed.iterations[0]).toMatchObject({
+        decisionConfidence: "medium",
+        nextFocus: ["Verify the updated title does not create duplicate wording."],
+        riskFlags: ["changed-target-document"]
+      });
+      expect(output.content).toContain('"confidence": "medium"');
+      expect(output.content).toContain('"nextFocus"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run continues on changed target when Codex summary lacks structured continue marker", async () => {
+    const root = join(tmpdir(), `ccagent-iterative-fallback-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Draft\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41014, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# Changed\n", "utf8");
+              return { exitCode: 0, content: "edited without structured marker" };
+            }
+            if (codexCalls === 2) {
+              return { exitCode: 0, content: "Summary without any continue marker." };
+            }
+            if (codexCalls === 3) {
+              return { exitCode: 0, content: "second edit made no change" };
+            }
+            return { exitCode: 0, content: "second summary" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 2
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+
+      expect(completed.iterations[0]).toMatchObject({
+        status: "completed",
+        changesDetected: true,
+        stopReason: expect.stringContaining("structured continue marker")
+      });
+      expect(completed.iterations[1]).toMatchObject({
+        status: "stopped",
+        stopReason: "Reached maximum iteration count (2)."
+      });
+      expect(completed.iterations[1].codexContinueRequested).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run respects Codex stop decision after changes when Codex gives an explicit reason", async () => {
+    const root = join(tmpdir(), `ccagent-iterative-rereview-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    const reviewedContents: string[] = [];
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Draft\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => {
+            reviewedContents.push(readFileSync(targetPath, "utf8"));
+            return { content: "provider review output", raw: "{}" };
+          },
+          allocatePort: async () => ({ port: 41015, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# Changed by Codex\n", "utf8");
+              return { exitCode: 0, content: "edited target" };
+            }
+            if (codexCalls === 2) {
+              return {
+                exitCode: 0,
+                content: "## Continue Decision\ncontinue: no\nreason: Codex believes all findings are handled"
+              };
+            }
+            if (codexCalls === 3) {
+              return { exitCode: 0, content: "second edit no change" };
+            }
+            return {
+              exitCode: 0,
+              content: "## Continue Decision\ncontinue: no\nreason: provider re-review found no further actionable changes"
+            };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 3
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+
+      expect(reviewedContents).toEqual(["# Draft\n"]);
+      expect(completed.iterations).toEqual([
+        expect.objectContaining({
+          iteration: 1,
+          status: "stopped",
+          changesDetected: true,
+          continueRequested: false,
+          stopReason: "Codex believes all findings are handled"
+        })
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run records Codex continue request when max iteration limit stops the run", async () => {
+    const root = join(tmpdir(), `ccagent-max-iteration-decision-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Draft\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41016, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# Changed\n", "utf8");
+              return { exitCode: 0, content: "edited target" };
+            }
+            return {
+              exitCode: 0,
+              content: [
+                "## Continue Decision",
+                "continue: yes",
+                "reason: Codex wants another provider review",
+                "confidence: high",
+                "next_focus:",
+                "- Re-review the changed heading.",
+                "risk_flags:",
+                "- changed-target-document"
+              ].join("\n")
+            };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 1
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+      const output = (await client.get(`/automation-runs/${run.id}/output?maxBytes=20000`)) as any;
+
+      expect(completed.iterations[0]).toMatchObject({
+        status: "stopped",
+        changesDetected: true,
+        continueRequested: false,
+        codexContinueRequested: true,
+        decisionConfidence: "high",
+        nextFocus: ["Re-review the changed heading."],
+        riskFlags: ["changed-target-document"],
+        stopReason: "Reached maximum iteration count (1)."
+      });
+      expect(output.content).toContain('"codexContinueRequested": true');
+      expect(output.content).toContain("codex_continue=yes");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

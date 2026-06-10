@@ -1,4 +1,5 @@
 import type {
+  AutomationRunIterationRecord,
   AutomationRunProviderRecord,
   AutomationRunRecord,
   CodexEditTaskRecord
@@ -16,9 +17,9 @@ export class SqliteAutomationRunStore {
         .prepare(
           `INSERT INTO automation_runs
             (id, status, cwd, file, review_style, language, claude_template_id, codex_template_id,
-             fully_auto, output_dir, review_packet_path, codex_prompt_path, codex_output_path,
+             fully_auto, max_iterations, output_dir, review_packet_path, codex_prompt_path, codex_output_path,
              diff_path, final_report_path, error_json, created_at, updated_at, finished_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.id,
@@ -30,6 +31,7 @@ export class SqliteAutomationRunStore {
           input.claudeTemplateId,
           input.codexTemplateId,
           input.fullyAuto ? 1 : 0,
+          input.maxIterations,
           input.outputDir,
           input.reviewPacketPath ?? null,
           input.codexPromptPath ?? null,
@@ -50,16 +52,17 @@ export class SqliteAutomationRunStore {
       return cloneRun(input);
     }
 
-    const { providers: _providers, codexTask: _codexTask, ...run } = input;
+    const { providers: _providers, codexTask: _codexTask, iterations: _iterations, ...run } = input;
     this.database.automationRuns.set(input.id, { ...run });
     this.database.automationRunProviders.push(...input.providers.map(cloneProvider));
     if (input.codexTask) {
       this.database.codexEditTasks.set(input.id, { ...input.codexTask });
     }
+    this.database.automationRunIterations.push(...input.iterations.map(cloneIteration));
     return cloneRun(input);
   }
 
-  updateRun(id: string, patch: Partial<Omit<AutomationRunRecord, "id" | "providers" | "codexTask">>): void {
+  updateRun(id: string, patch: Partial<Omit<AutomationRunRecord, "id" | "providers" | "codexTask" | "iterations">>): void {
     const existing = this.getRun(id);
     if (!existing) {
       throw new Error(`automation run missing: ${id}`);
@@ -78,6 +81,7 @@ export class SqliteAutomationRunStore {
             claude_template_id = ?,
             codex_template_id = ?,
             fully_auto = ?,
+            max_iterations = ?,
             output_dir = ?,
             review_packet_path = ?,
             codex_prompt_path = ?,
@@ -99,6 +103,7 @@ export class SqliteAutomationRunStore {
           next.claudeTemplateId,
           next.codexTemplateId,
           next.fullyAuto ? 1 : 0,
+          next.maxIterations,
           next.outputDir,
           next.reviewPacketPath ?? null,
           next.codexPromptPath ?? null,
@@ -114,8 +119,69 @@ export class SqliteAutomationRunStore {
       return;
     }
 
-    const { providers: _providers, codexTask: _codexTask, ...run } = next;
+    const { providers: _providers, codexTask: _codexTask, iterations: _iterations, ...run } = next;
     this.database.automationRuns.set(id, { ...run });
+  }
+
+  upsertIteration(iteration: AutomationRunIterationRecord): void {
+    if (this.database.kind === "sqlite") {
+      this.database.handle
+        .prepare(
+          `INSERT INTO automation_run_iterations
+            (run_id, iteration, status, review_packet_path, codex_prompt_path, codex_output_path,
+             diff_path, decision_summary_path, stop_decision_path, stop_reason, changes_detected,
+             continue_requested, codex_continue_requested, decision_confidence, next_focus_json,
+             risk_flags_json, started_at, finished_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(run_id, iteration) DO UPDATE SET
+            status = excluded.status,
+            review_packet_path = excluded.review_packet_path,
+            codex_prompt_path = excluded.codex_prompt_path,
+            codex_output_path = excluded.codex_output_path,
+            diff_path = excluded.diff_path,
+            decision_summary_path = excluded.decision_summary_path,
+            stop_decision_path = excluded.stop_decision_path,
+            stop_reason = excluded.stop_reason,
+            changes_detected = excluded.changes_detected,
+            continue_requested = excluded.continue_requested,
+            codex_continue_requested = excluded.codex_continue_requested,
+            decision_confidence = excluded.decision_confidence,
+            next_focus_json = excluded.next_focus_json,
+            risk_flags_json = excluded.risk_flags_json,
+            started_at = excluded.started_at,
+            finished_at = excluded.finished_at`
+        )
+        .run(
+          iteration.runId,
+          iteration.iteration,
+          iteration.status,
+          iteration.reviewPacketPath ?? null,
+          iteration.codexPromptPath ?? null,
+          iteration.codexOutputPath ?? null,
+          iteration.diffPath ?? null,
+          iteration.decisionSummaryPath ?? null,
+          iteration.stopDecisionPath ?? null,
+          iteration.stopReason ?? null,
+          iteration.changesDetected ? 1 : 0,
+          iteration.continueRequested === undefined ? null : iteration.continueRequested ? 1 : 0,
+          iteration.codexContinueRequested === undefined ? null : iteration.codexContinueRequested ? 1 : 0,
+          iteration.decisionConfidence ?? null,
+          iteration.nextFocus ? JSON.stringify(iteration.nextFocus) : null,
+          iteration.riskFlags ? JSON.stringify(iteration.riskFlags) : null,
+          iteration.startedAt,
+          iteration.finishedAt ?? null
+        );
+      return;
+    }
+
+    const index = this.database.automationRunIterations.findIndex(
+      (item) => item.runId === iteration.runId && item.iteration === iteration.iteration
+    );
+    if (index === -1) {
+      this.database.automationRunIterations.push(cloneIteration(iteration));
+      return;
+    }
+    this.database.automationRunIterations[index] = cloneIteration(iteration);
   }
 
   updateProvider(runId: string, provider: string, patch: Partial<AutomationRunProviderRecord>): void {
@@ -192,7 +258,11 @@ export class SqliteAutomationRunStore {
         .filter((provider) => provider.runId === id)
         .sort((left, right) => left.position - right.position)
         .map(cloneProvider),
-      codexTask: this.database.codexEditTasks.get(id)
+      codexTask: this.database.codexEditTasks.get(id),
+      iterations: this.database.automationRunIterations
+        .filter((iteration) => iteration.runId === id)
+        .sort((left, right) => left.iteration - right.iteration)
+        .map(cloneIteration)
     });
   }
 
@@ -214,6 +284,7 @@ export class SqliteAutomationRunStore {
   deleteRun(id: string): void {
     if (this.database.kind === "sqlite") {
       this.database.handle.prepare("DELETE FROM codex_edit_tasks WHERE run_id = ?").run(id);
+      this.database.handle.prepare("DELETE FROM automation_run_iterations WHERE run_id = ?").run(id);
       this.database.handle.prepare("DELETE FROM automation_run_providers WHERE run_id = ?").run(id);
       this.database.handle.prepare("DELETE FROM automation_runs WHERE id = ?").run(id);
       return;
@@ -224,6 +295,12 @@ export class SqliteAutomationRunStore {
     for (let index = providers.length - 1; index >= 0; index -= 1) {
       if (providers[index].runId === id) {
         providers.splice(index, 1);
+      }
+    }
+    const iterations = this.database.automationRunIterations;
+    for (let index = iterations.length - 1; index >= 0; index -= 1) {
+      if (iterations[index].runId === id) {
+        iterations.splice(index, 1);
       }
     }
     this.database.automationRuns.delete(id);
@@ -269,6 +346,10 @@ export class SqliteAutomationRunStore {
     const codexTask = this.database.handle
       .prepare("SELECT * FROM codex_edit_tasks WHERE run_id = ?")
       .get(row.id) as SqliteCodexEditTaskRow | undefined;
+    const iterations = this.database.handle
+      .prepare("SELECT * FROM automation_run_iterations WHERE run_id = ? ORDER BY iteration ASC")
+      .all(row.id)
+      .map((iteration: unknown) => sqliteIterationToRecord(iteration as SqliteAutomationRunIterationRow));
 
     return {
       id: row.id,
@@ -280,6 +361,7 @@ export class SqliteAutomationRunStore {
       claudeTemplateId: row.claude_template_id,
       codexTemplateId: row.codex_template_id,
       fullyAuto: row.fully_auto === 1,
+      maxIterations: row.max_iterations,
       outputDir: row.output_dir,
       reviewPacketPath: row.review_packet_path ?? undefined,
       codexPromptPath: row.codex_prompt_path ?? undefined,
@@ -291,7 +373,8 @@ export class SqliteAutomationRunStore {
       updatedAt: row.updated_at,
       finishedAt: row.finished_at ?? undefined,
       providers,
-      codexTask: codexTask ? sqliteCodexTaskToRecord(codexTask) : undefined
+      codexTask: codexTask ? sqliteCodexTaskToRecord(codexTask) : undefined,
+      iterations
     };
   }
 }
@@ -306,6 +389,7 @@ interface SqliteAutomationRunRow {
   claude_template_id: string;
   codex_template_id: string;
   fully_auto: number;
+  max_iterations: number;
   output_dir: string;
   review_packet_path: string | null;
   codex_prompt_path: string | null;
@@ -315,6 +399,27 @@ interface SqliteAutomationRunRow {
   error_json: string | null;
   created_at: string;
   updated_at: string;
+  finished_at: string | null;
+}
+
+interface SqliteAutomationRunIterationRow {
+  run_id: string;
+  iteration: number;
+  status: string;
+  review_packet_path: string | null;
+  codex_prompt_path: string | null;
+  codex_output_path: string | null;
+  diff_path: string | null;
+  decision_summary_path: string | null;
+  stop_decision_path: string | null;
+  stop_reason: string | null;
+  changes_detected: number;
+  continue_requested: number | null;
+  codex_continue_requested: number | null;
+  decision_confidence: string | null;
+  next_focus_json: string | null;
+  risk_flags_json: string | null;
+  started_at: string;
   finished_at: string | null;
 }
 
@@ -366,14 +471,58 @@ function sqliteCodexTaskToRecord(row: SqliteCodexEditTaskRow): CodexEditTaskReco
   };
 }
 
+function sqliteIterationToRecord(row: SqliteAutomationRunIterationRow): AutomationRunIterationRecord {
+  return {
+    runId: row.run_id,
+    iteration: row.iteration,
+    status: row.status as AutomationRunIterationRecord["status"],
+    reviewPacketPath: row.review_packet_path ?? undefined,
+    codexPromptPath: row.codex_prompt_path ?? undefined,
+    codexOutputPath: row.codex_output_path ?? undefined,
+    diffPath: row.diff_path ?? undefined,
+    decisionSummaryPath: row.decision_summary_path ?? undefined,
+    stopDecisionPath: row.stop_decision_path ?? undefined,
+    stopReason: row.stop_reason ?? undefined,
+    changesDetected: row.changes_detected === 1,
+    continueRequested: row.continue_requested === null ? undefined : row.continue_requested === 1,
+    codexContinueRequested: row.codex_continue_requested === null ? undefined : row.codex_continue_requested === 1,
+    decisionConfidence: parseConfidence(row.decision_confidence),
+    nextFocus: parseStringArray(row.next_focus_json),
+    riskFlags: parseStringArray(row.risk_flags_json),
+    startedAt: row.started_at,
+    finishedAt: row.finished_at ?? undefined
+  };
+}
+
+function parseConfidence(value: string | null): AutomationRunIterationRecord["decisionConfidence"] {
+  return value === "high" || value === "medium" || value === "low" ? value : undefined;
+}
+
+function parseStringArray(value: string | null): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function cloneRun(run: AutomationRunRecord): AutomationRunRecord {
   return {
     ...run,
     providers: run.providers.map(cloneProvider),
-    codexTask: run.codexTask ? { ...run.codexTask } : undefined
+    codexTask: run.codexTask ? { ...run.codexTask } : undefined,
+    iterations: run.iterations.map(cloneIteration)
   };
 }
 
 function cloneProvider(provider: AutomationRunProviderRecord): AutomationRunProviderRecord {
   return { ...provider };
+}
+
+function cloneIteration(iteration: AutomationRunIterationRecord): AutomationRunIterationRecord {
+  return { ...iteration };
 }

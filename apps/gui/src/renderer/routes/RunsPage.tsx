@@ -35,6 +35,7 @@ export function RunsPage({
             <th>Status</th>
             <th>Target</th>
             <th>Providers</th>
+            <th>Iterations</th>
             <th>Started</th>
             <th>Phase</th>
             <th>Cancel</th>
@@ -50,6 +51,7 @@ export function RunsPage({
               <td>{run.status}</td>
               <td title={run.file}>{run.file}</td>
               <td>{providerSummary(run)}</td>
+              <td>{iterationSummary(run)}</td>
               <td>{run.createdAt}</td>
               <td>{phaseLabel(run)}</td>
               <td>
@@ -107,4 +109,13 @@ function phaseLabel(run: AutomationRunRecord): string {
     return "Cancelled";
   }
   return run.status;
+}
+
+function iterationSummary(run: AutomationRunRecord): string {
+  if (run.iterations.length === 0) {
+    return `0 / ${run.maxIterations}`;
+  }
+  const latest = run.iterations[run.iterations.length - 1];
+  const reason = latest.stopReason ? `: ${latest.stopReason}` : "";
+  return `${latest.iteration} / ${run.maxIterations} ${latest.status}${reason}`;
 }

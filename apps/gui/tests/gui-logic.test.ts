@@ -121,6 +121,75 @@ describe("GUI renderer logic", () => {
     expect(summary).not.toContain("Applied: update section 4.");
   });
 
+  test("formatRunDecisionSummary prefers iterative final report over raw iteration logs", () => {
+    const summary = formatRunDecisionSummary(
+      {
+        ...runFixture,
+        maxIterations: 3,
+        iterations: [
+          {
+            runId: "run_1",
+            iteration: 1,
+            status: "completed",
+            changesDetected: true,
+            continueRequested: true,
+            startedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            runId: "run_1",
+            iteration: 2,
+            status: "stopped",
+            changesDetected: false,
+            continueRequested: false,
+            stopReason: "no remaining actionable changes",
+            startedAt: "2026-06-08T10:01:00.000Z"
+          }
+        ]
+      },
+      [
+        "# final-report.md",
+        "",
+        "## Iterations",
+        "- Iteration 1: completed; continue=yes; codex_continue=yes; confidence=medium; next_focus=Check title wording; risk_flags=changed-target-document",
+        "- Iteration 2: stopped; continue=no; codex_continue=yes; confidence=high; reason=max iteration limit",
+        "",
+        "# iteration-001/codex-decision-summary.md",
+        "",
+        "old first iteration summary",
+        "",
+        "# iteration-002/codex-decision-summary.md",
+        "",
+        "latest iteration summary"
+      ].join("\n")
+    );
+
+    expect(summary).toContain("## Iterations");
+    expect(summary).toContain("Iteration 2: stopped");
+    expect(summary).toContain("confidence=medium");
+    expect(summary).toContain("codex_continue=yes");
+    expect(summary).toContain("next_focus=Check title wording");
+    expect(summary).toContain("risk_flags=changed-target-document");
+    expect(summary).not.toContain("old first iteration summary");
+  });
+
+  test("formatRunDecisionSummary falls back to latest iteration summary when final report is missing", () => {
+    const summary = formatRunDecisionSummary(
+      runFixture,
+      [
+        "# iteration-001/codex-decision-summary.md",
+        "",
+        "first iteration",
+        "",
+        "# iteration-002/codex-decision-summary.md",
+        "",
+        "second iteration"
+      ].join("\n")
+    );
+
+    expect(summary).toContain("second iteration");
+    expect(summary).not.toContain("first iteration");
+  });
+
   test("formatRunDecisionSummary falls back to user-facing run state when Codex output is missing", () => {
     expect(formatRunDecisionSummary({ ...runFixture, status: "codex_editing" }, "")).toBe(
       "Codex is still reviewing provider feedback for D:/project/docs/handoff.md."
@@ -189,8 +258,10 @@ const runFixture = {
   claudeTemplateId: "default-claude-review-full",
   codexTemplateId: "default-codex-edit",
   fullyAuto: true,
+  maxIterations: 1,
   outputDir: "D:/project/.ccagent/runs/run_1",
   createdAt: "2026-06-08T10:00:00.000Z",
   updatedAt: "2026-06-08T10:00:01.000Z",
-  providers: []
+  providers: [],
+  iterations: []
 };

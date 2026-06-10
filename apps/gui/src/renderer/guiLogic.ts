@@ -56,8 +56,18 @@ export function formatOutput(output: unknown): string {
 }
 
 export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: string): string {
+  if (run.status === "failed") {
+    const reason = parseErrorMessage(run.errorJson);
+    return [
+      `Codex did not produce a review decision for ${run.file}.`,
+      reason ? `Reason: ${reason.replace(/^CCAGENT_[A-Z_]+:\s*/, "")}` : undefined
+    ].filter(Boolean).join("\n");
+  }
+
+  const finalReport = extractOutputSection(runOutput, "final-report.md");
   const decisionSummary = extractOutputSection(runOutput, "codex-decision-summary.md");
-  const codexOutput = decisionSummary || extractOutputSection(runOutput, "codex-output.md");
+  const latestIterationSummary = extractLastOutputSection(runOutput, "/codex-decision-summary.md");
+  const codexOutput = finalReport || decisionSummary || latestIterationSummary || extractOutputSection(runOutput, "codex-output.md");
   if (codexOutput) {
     return [
       `Codex review decision for ${run.file}:`,
@@ -72,14 +82,6 @@ export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: st
 
   if (run.status === "reviewing" || run.status === "merging" || run.status === "queued") {
     return `Provider review is still running for ${run.file}. Codex has not produced a review decision yet.`;
-  }
-
-  if (run.status === "failed") {
-    const reason = parseErrorMessage(run.errorJson);
-    return [
-      `Codex did not produce a review decision for ${run.file}.`,
-      reason ? `Reason: ${reason.replace(/^CCAGENT_[A-Z_]+:\s*/, "")}` : undefined
-    ].filter(Boolean).join("\n");
   }
 
   return `No Codex review decision is available for ${run.file}.`;
@@ -106,6 +108,22 @@ function extractOutputSection(output: string, label: string): string {
   }
 
   const contentStart = start + marker.length;
+  const nextSection = output.indexOf("\n# ", contentStart);
+  const rawSection = nextSection === -1
+    ? output.slice(contentStart)
+    : output.slice(contentStart, nextSection);
+  return rawSection.trim();
+}
+
+function extractLastOutputSection(output: string, labelSuffix: string): string {
+  const matches = [...output.matchAll(/^# (.+)$/gm)]
+    .filter((match) => match[1].endsWith(labelSuffix));
+  const last = matches.at(-1);
+  if (!last || last.index === undefined) {
+    return "";
+  }
+
+  const contentStart = last.index + last[0].length;
   const nextSection = output.indexOf("\n# ", contentStart);
   const rawSection = nextSection === -1
     ? output.slice(contentStart)

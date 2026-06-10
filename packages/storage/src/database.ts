@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type {
+  AutomationRunIterationRecord,
   AutomationRunProviderRecord,
   AutomationRunRecord,
   CodexEditTaskRecord,
@@ -22,8 +23,9 @@ export class MemoryDatabase implements CCAgentDatabase {
   readonly reviewBatches = new Map<string, StoredReviewBatchRow>();
   readonly reviewBatchTasks: StoredReviewBatchTaskRow[] = [];
   readonly promptTemplates = new Map<string, PromptTemplate>();
-  readonly automationRuns = new Map<string, Omit<AutomationRunRecord, "providers" | "codexTask">>();
+  readonly automationRuns = new Map<string, Omit<AutomationRunRecord, "providers" | "codexTask" | "iterations">>();
   readonly automationRunProviders: AutomationRunProviderRecord[] = [];
+  readonly automationRunIterations: AutomationRunIterationRecord[] = [];
   readonly codexEditTasks = new Map<string, CodexEditTaskRecord>();
   private readonly pragmas = new Map<string, unknown>([
     ["journal_mode", "memory"],
@@ -139,6 +141,7 @@ export class SqliteDatabase implements CCAgentDatabase {
         claude_template_id TEXT NOT NULL,
         codex_template_id TEXT NOT NULL,
         fully_auto INTEGER NOT NULL,
+        max_iterations INTEGER NOT NULL DEFAULT 1,
         output_dir TEXT NOT NULL,
         review_packet_path TEXT,
         codex_prompt_path TEXT,
@@ -173,7 +176,46 @@ export class SqliteDatabase implements CCAgentDatabase {
         started_at TEXT NOT NULL,
         finished_at TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS automation_run_iterations (
+        run_id TEXT NOT NULL,
+        iteration INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        review_packet_path TEXT,
+        codex_prompt_path TEXT,
+        codex_output_path TEXT,
+        diff_path TEXT,
+        decision_summary_path TEXT,
+        stop_decision_path TEXT,
+        stop_reason TEXT,
+        changes_detected INTEGER NOT NULL,
+        continue_requested INTEGER,
+        codex_continue_requested INTEGER,
+        decision_confidence TEXT,
+        next_focus_json TEXT,
+        risk_flags_json TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        PRIMARY KEY (run_id, iteration)
+      );
     `);
+    try {
+      this.handle.exec("ALTER TABLE automation_runs ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 1");
+    } catch {
+      // Column already exists on databases created after iterative automation support.
+    }
+    for (const sql of [
+      "ALTER TABLE automation_run_iterations ADD COLUMN decision_confidence TEXT",
+      "ALTER TABLE automation_run_iterations ADD COLUMN codex_continue_requested INTEGER",
+      "ALTER TABLE automation_run_iterations ADD COLUMN next_focus_json TEXT",
+      "ALTER TABLE automation_run_iterations ADD COLUMN risk_flags_json TEXT"
+    ]) {
+      try {
+        this.handle.exec(sql);
+      } catch {
+        // Column already exists on databases created after Codex decision protocol support.
+      }
+    }
   }
 }
 

@@ -12,6 +12,7 @@ interface AutomationRunRequest {
   timeoutMs?: number;
   maxOutputBytes?: number;
   fullyAuto?: boolean;
+  maxIterations?: number;
 }
 
 interface PromptTemplate {

@@ -47,6 +47,7 @@ describe("automation run storage", () => {
       claudeTemplateId: "default-claude-review-full",
       codexTemplateId: "default-codex-edit",
       fullyAuto: true,
+      maxIterations: 2,
       outputDir: "D:/project/.ccagent/runs/run_1",
       createdAt: "2026-06-08T10:00:00.000Z",
       updatedAt: "2026-06-08T10:00:00.000Z",
@@ -58,7 +59,8 @@ describe("automation run storage", () => {
           status: "queued",
           position: 0
         }
-      ]
+      ],
+      iterations: []
     });
 
     store.updateRun("run_1", {
@@ -77,12 +79,39 @@ describe("automation run storage", () => {
       promptPath: "D:/project/.ccagent/runs/run_1/codex-prompt.md",
       startedAt: "2026-06-08T10:00:02.000Z"
     });
+    store.upsertIteration({
+      runId: "run_1",
+      iteration: 1,
+      status: "completed",
+      reviewPacketPath: "D:/project/.ccagent/runs/run_1/iterations/iteration-001/review-packet.md",
+      diffPath: "D:/project/.ccagent/runs/run_1/iterations/iteration-001/diff.patch",
+      stopReason: "continuing after document changes",
+      changesDetected: true,
+      continueRequested: true,
+      codexContinueRequested: true,
+      decisionConfidence: "medium",
+      nextFocus: ["Check whether the updated milestone labels are consistent"],
+      riskFlags: ["summary-diff-mismatch"],
+      startedAt: "2026-06-08T10:00:03.000Z",
+      finishedAt: "2026-06-08T10:00:04.000Z"
+    });
 
     expect(store.getRun("run_1")).toMatchObject({
       id: "run_1",
       status: "reviewing",
+      maxIterations: 2,
       providers: [{ provider: "glm", status: "succeeded", taskId: "task_1" }],
-      codexTask: { taskId: "codex_1", status: "running" }
+      codexTask: { taskId: "codex_1", status: "running" },
+      iterations: [{
+        iteration: 1,
+        status: "completed",
+        changesDetected: true,
+        continueRequested: true,
+        codexContinueRequested: true,
+        decisionConfidence: "medium",
+        nextFocus: ["Check whether the updated milestone labels are consistent"],
+        riskFlags: ["summary-diff-mismatch"]
+      }]
     });
     expect(store.listRuns(10)).toHaveLength(1);
 
