@@ -1,8 +1,10 @@
 import type { ProviderConfig } from "@ccagent/core";
 import { useMemo, useState } from "react";
 import { ProviderForm } from "../components/ProviderForm.js";
+import type { Translator } from "../i18n.js";
 
 export interface ProvidersPageProps {
+  t: Translator;
   providers: ProviderConfig[];
   selectedProviderId?: string;
   secretFingerprints?: Record<string, string>;
@@ -13,6 +15,7 @@ export interface ProvidersPageProps {
 }
 
 export function ProvidersPage({
+  t,
   providers,
   selectedProviderId,
   secretFingerprints = {},
@@ -30,9 +33,9 @@ export function ProvidersPage({
   return (
     <section className="page-section" id="providers">
       <header className="section-header">
-        <h2>Providers</h2>
+        <h2>{t("providersTitle")}</h2>
         <button type="button" onClick={() => setIsCreating(true)}>
-          New provider
+          {t("newProvider")}
         </button>
       </header>
       <div className="provider-layout">
@@ -54,6 +57,7 @@ export function ProvidersPage({
         </aside>
         <div className="editor-stack">
           <ProviderForm
+            t={t}
             key={selected?.id ?? "new-provider"}
             provider={selected}
             secretFingerprint={selected ? secretFingerprints[selected.id] : undefined}
@@ -66,7 +70,7 @@ export function ProvidersPage({
           {selected ? (
             <div className="button-row danger-row">
               <button type="button" onClick={() => void onDeleteProvider?.(selected.id)}>
-                Delete provider
+                {t("deleteProvider")}
               </button>
             </div>
           ) : null}

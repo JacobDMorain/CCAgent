@@ -1,18 +1,23 @@
 import type { AutomationRunRecord } from "@ccagent/core";
+import type { Translator } from "../i18n.js";
+import type { RunDecisionDetails } from "../guiLogic.js";
 
 export interface RunsPageProps {
+  t: Translator;
   runs: AutomationRunRecord[];
   selectedOutput?: string;
   selectedOutputRunId?: string;
-  selectedStatus?: string;
+  selectedStatus?: RunDecisionDetails;
   selectedStatusRunId?: string;
   onCancel(runId: string): void | Promise<void>;
   onShowStatus(run: AutomationRunRecord): void | Promise<void>;
+  onSelectStatusIteration(runId: string, iteration: number | undefined): void;
   onReadOutput(runId: string): void | Promise<void>;
   onDelete(runId: string): void | Promise<void>;
 }
 
 export function RunsPage({
+  t,
   runs,
   selectedOutput,
   selectedOutputRunId,
@@ -20,28 +25,29 @@ export function RunsPage({
   selectedStatusRunId,
   onCancel,
   onShowStatus,
+  onSelectStatusIteration,
   onReadOutput,
   onDelete
 }: RunsPageProps) {
   return (
     <section className="page-section" id="runs">
       <header>
-        <h2>Runs</h2>
+        <h2>{t("runsTitle")}</h2>
       </header>
       <table className="task-table">
         <thead>
           <tr>
-            <th>Run id</th>
-            <th>Status</th>
-            <th>Target</th>
-            <th>Providers</th>
-            <th>Iterations</th>
-            <th>Started</th>
-            <th>Phase</th>
-            <th>Cancel</th>
-            <th>Status</th>
-            <th>Output</th>
-            <th>Delete</th>
+            <th>{t("runId")}</th>
+            <th>{t("status")}</th>
+            <th>{t("target")}</th>
+            <th>{t("providers")}</th>
+            <th>{t("iterations")}</th>
+            <th>{t("started")}</th>
+            <th>{t("phase")}</th>
+            <th>{t("cancel")}</th>
+            <th>{t("status")}</th>
+            <th>{t("output")}</th>
+            <th>{t("delete")}</th>
           </tr>
         </thead>
         <tbody>
@@ -50,63 +56,113 @@ export function RunsPage({
               <td title={run.id}>{run.id}</td>
               <td>{run.status}</td>
               <td title={run.file}>{run.file}</td>
-              <td>{providerSummary(run)}</td>
+              <td>{providerSummary(run, t)}</td>
               <td>{iterationSummary(run)}</td>
               <td>{run.createdAt}</td>
-              <td>{phaseLabel(run)}</td>
+              <td>{phaseLabel(run, t)}</td>
               <td>
-                <button type="button" onClick={() => void onCancel(run.id)}>Cancel</button>
+                <button type="button" onClick={() => void onCancel(run.id)}>{t("cancel")}</button>
               </td>
               <td>
-                <button type="button" onClick={() => onShowStatus(run)}>Status</button>
+                <button type="button" onClick={() => onShowStatus(run)}>{t("status")}</button>
               </td>
               <td>
                 <button type="button" onClick={() => void onReadOutput(run.id)}>
-                  {selectedOutputRunId === run.id ? "Hide" : "Read"}
+                  {selectedOutputRunId === run.id ? t("hide") : t("read")}
                 </button>
               </td>
               <td>
-                <button type="button" onClick={() => void onDelete(run.id)}>Delete</button>
+                <button type="button" onClick={() => void onDelete(run.id)}>{t("delete")}</button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       {selectedStatusRunId && selectedStatus ? (
-        <pre className="output-viewer">{selectedStatus}</pre>
+        <RunStatusViewer
+          details={selectedStatus}
+          runId={selectedStatusRunId}
+          onSelectIteration={onSelectStatusIteration}
+        />
       ) : null}
       {selectedOutputRunId && selectedOutput ? <pre className="output-viewer">{selectedOutput}</pre> : null}
     </section>
   );
 }
 
-function providerSummary(run: AutomationRunRecord): string {
-  const succeeded = run.providers.filter((provider) => provider.status === "succeeded").length;
-  const failed = run.providers.filter((provider) => provider.status !== "succeeded").length;
-  return `${succeeded} ok / ${failed} other`;
+function RunStatusViewer({
+  details,
+  runId,
+  onSelectIteration
+}: {
+  details: RunDecisionDetails;
+  runId: string;
+  onSelectIteration(runId: string, iteration: number | undefined): void;
+}) {
+  const selectedIteration = details.selectedIteration;
+  const selectedDetail = details.iterations.find((item) => item.iteration === selectedIteration);
+  const content = selectedDetail?.content ?? details.overview;
+
+  return (
+    <div className="status-viewer">
+      <div className="status-tabs">
+        <button
+          type="button"
+          className={selectedIteration === undefined ? "selected" : undefined}
+          onClick={() => onSelectIteration(runId, undefined)}
+        >
+          Overview
+        </button>
+        {details.iterations.map((iteration) => (
+          <button
+            type="button"
+            key={iteration.iteration}
+            className={selectedIteration === iteration.iteration ? "selected" : undefined}
+            onClick={() => onSelectIteration(runId, iteration.iteration)}
+          >
+            {iteration.label}
+          </button>
+        ))}
+      </div>
+      <pre className="output-viewer">{content}</pre>
+      {selectedDetail?.warnings?.length ? (
+        <div className="status-warning">
+          {selectedDetail.warnings.map((warning) => (
+            <div key={warning}>{warning}</div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function phaseLabel(run: AutomationRunRecord): string {
+function providerSummary(run: AutomationRunRecord, t: Translator): string {
+  const succeeded = run.providers.filter((provider) => provider.status === "succeeded").length;
+  const failed = run.providers.filter((provider) => provider.status !== "succeeded").length;
+  return t("providerSummary", { succeeded, failed });
+}
+
+function phaseLabel(run: AutomationRunRecord, t: Translator): string {
   if (run.status === "reviewing") {
-    return "Reviewing";
+    return t("phaseReviewing");
   }
   if (run.status === "merging") {
-    return "Merging reviews";
+    return t("phaseMerging");
   }
   if (run.status === "codex_editing") {
-    return "Codex editing";
+    return t("phaseCodexEditing");
   }
   if (run.status === "verifying") {
-    return "Verifying";
+    return t("phaseVerifying");
   }
   if (run.status === "done") {
-    return "Done";
+    return t("phaseDone");
   }
   if (run.status === "failed") {
-    return "Failed";
+    return t("phaseFailed");
   }
   if (run.status === "cancelled") {
-    return "Cancelled";
+    return t("phaseCancelled");
   }
   return run.status;
 }

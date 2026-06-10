@@ -1,13 +1,15 @@
 import type { PromptTemplate } from "@ccagent/core";
 import { useMemo, useState } from "react";
+import type { Translator } from "../i18n.js";
 
 export interface TemplatesPageProps {
+  t: Translator;
   templates: PromptTemplate[];
   onSave(template: PromptTemplate): void | Promise<void>;
   onDelete?(templateId: string): void | Promise<void>;
 }
 
-export function TemplatesPage({ templates, onSave, onDelete }: TemplatesPageProps) {
+export function TemplatesPage({ t, templates, onSave, onDelete }: TemplatesPageProps) {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>(templates[0]?.id);
   const current = useMemo(
     () => templates.find((template) => template.id === selectedTemplateId) ?? templates[0],
@@ -16,7 +18,7 @@ export function TemplatesPage({ templates, onSave, onDelete }: TemplatesPageProp
   return (
     <section className="page-section" id="templates">
       <header>
-        <h2>Prompt Templates</h2>
+        <h2>{t("templatesTitle")}</h2>
       </header>
       <div className="template-grid">
         <div className="template-list">
@@ -50,28 +52,28 @@ export function TemplatesPage({ templates, onSave, onDelete }: TemplatesPageProp
             }}
           >
             <label>
-              <span>Name</span>
+              <span>{t("name")}</span>
               <input name="name" defaultValue={current.name} />
             </label>
             <label>
-              <span>Description</span>
+              <span>{t("description")}</span>
               <input name="description" defaultValue={current.description} />
             </label>
             <label>
-              <span>Content</span>
+              <span>{t("content")}</span>
               <textarea name="content" defaultValue={current.content} />
             </label>
             <div className="button-row flush-row">
-              <button type="submit">Save template</button>
+              <button type="submit">{t("saveTemplate")}</button>
               {!current.isDefault ? (
                 <button type="button" onClick={() => void onDelete?.(current.id)}>
-                  Delete template
+                  {t("deleteTemplate")}
                 </button>
               ) : null}
             </div>
           </form>
         ) : (
-          <p>No templates loaded</p>
+          <p>{t("noTemplatesLoaded")}</p>
         )}
       </div>
     </section>

@@ -1,20 +1,22 @@
 import type { ProviderConfig } from "@ccagent/core";
 import { buildProviderFromForm } from "../guiLogic.js";
+import { createTranslator, type Translator } from "../i18n.js";
 
 export interface ProviderFormProps {
+  t?: Translator;
   provider?: ProviderConfig;
   secretFingerprint?: string;
   onSave?(provider: ProviderConfig, apiKey?: string): void | Promise<void>;
   onTest?(provider: ProviderConfig, apiKey?: string): void | Promise<void>;
 }
 
-export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: ProviderFormProps) {
+export function ProviderForm({ t = createTranslator("en"), provider, secretFingerprint, onSave, onTest }: ProviderFormProps) {
   const current = provider ?? emptyProvider();
 
   return (
     <form
       className="panel provider-form"
-      aria-label="Provider editor"
+      aria-label={t("providerEditor")}
       onSubmit={(event) => {
         event.preventDefault();
         const { provider, apiKey } = buildProviderFromForm(new FormData(event.currentTarget), current);
@@ -23,44 +25,44 @@ export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: Pr
     >
       <div className="form-grid">
         <label>
-          <span>Provider id</span>
+          <span>{t("providerId")}</span>
           <input name="id" defaultValue={current.id} />
         </label>
         <label>
-          <span>Display name</span>
+          <span>{t("displayName")}</span>
           <input name="displayName" defaultValue={current.displayName} />
         </label>
         <label>
-          <span>Mode</span>
+          <span>{t("mode")}</span>
           <select name="mode" defaultValue={current.mode}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="anthropic-compatible">Anthropic-compatible</option>
           </select>
         </label>
         <label>
-          <span>Base URL</span>
+          <span>{t("baseUrl")}</span>
           <input name="baseUrl" defaultValue={current.baseUrl} />
         </label>
         <label>
-          <span>Auth header</span>
+          <span>{t("authHeader")}</span>
           <select name="authHeader" defaultValue={current.auth.header}>
             <option value="Authorization">Authorization</option>
             <option value="x-api-key">x-api-key</option>
           </select>
         </label>
         <label>
-          <span>Auth scheme</span>
+          <span>{t("authScheme")}</span>
           <select name="authScheme" defaultValue={current.auth.scheme}>
             <option value="Bearer">Bearer</option>
             <option value="Raw">Raw</option>
           </select>
         </label>
         <label>
-          <span>Default model</span>
+          <span>{t("defaultModel")}</span>
           <input name="defaultModel" defaultValue={current.models.default} />
         </label>
         <label>
-          <span>Review model</span>
+          <span>{t("reviewModel")}</span>
           <input name="reviewModel" defaultValue={current.models.review ?? ""} />
         </label>
         <label className="check-row">
@@ -69,24 +71,24 @@ export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: Pr
             type="checkbox"
             defaultChecked={current.capabilities.streaming}
           />
-          <span>Streaming</span>
+          <span>{t("streaming")}</span>
         </label>
         <label className="check-row">
           <input name="tools" type="checkbox" defaultChecked={current.capabilities.tools} />
-          <span>Tools</span>
+          <span>{t("tools")}</span>
         </label>
         <label className="check-row">
           <input name="enabled" type="checkbox" defaultChecked={current.enabled} />
-          <span>Enabled</span>
+          <span>{t("enabled")}</span>
         </label>
         <label>
-          <span>API key</span>
-          <input name="apiKey" type="password" placeholder="Paste new key" />
-          {secretFingerprint ? <small>Saved: {secretFingerprint}</small> : null}
+          <span>{t("apiKey")}</span>
+          <input name="apiKey" type="password" placeholder={t("pasteNewKey")} />
+          {secretFingerprint ? <small>{t("savedSecret", { fingerprint: secretFingerprint })}</small> : null}
         </label>
       </div>
       <div className="button-row">
-        <button type="submit">Save</button>
+        <button type="submit">{t("save")}</button>
         <button
           type="button"
           onClick={(event) => {
@@ -98,7 +100,7 @@ export function ProviderForm({ provider, secretFingerprint, onSave, onTest }: Pr
             void onTest?.(provider, apiKey);
           }}
         >
-          Test
+          {t("test")}
         </button>
       </div>
     </form>

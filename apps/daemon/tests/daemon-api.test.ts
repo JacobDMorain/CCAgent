@@ -1114,6 +1114,95 @@ describe("daemon API", () => {
     });
   });
 
+  test("automation run uses Codex-written decision summary file when stdout is only a confirmation", async () => {
+    const root = join(tmpdir(), `ccagent-summary-file-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41018, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async (input) => {
+            if (input.prompt.includes("Codex edit output")) {
+              const summaryPath = input.prompt.match(/Write the final summary to: (.+)/)?.[1].trim();
+              if (summaryPath) {
+                writeFileSync(
+                  summaryPath,
+                  [
+                    "## Applied",
+                    "- Kept the target title.",
+                    "",
+                    "## Rejected",
+                    "- None.",
+                    "",
+                    "## Deferred",
+                    "- None.",
+                    "",
+                    "## Files Changed",
+                    "- Path: test.md",
+                    "  - Summary: No content changes.",
+                    "",
+                    "## User-Facing Summary",
+                    "No document changes were required.",
+                    "",
+                    "## Continue Decision",
+                    "continue: no",
+                    "reason: no actionable changes remain",
+                    "confidence: high",
+                    "next_focus:",
+                    "- none",
+                    "risk_flags:",
+                    "- none"
+                  ].join("\n"),
+                  "utf8"
+                );
+              }
+              return { exitCode: 0, content: "I wrote the decision summary file." };
+            }
+            return { exitCode: 0, content: "Codex edit made no changes" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 1
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+      const summaryPath = completed.iterations[0].decisionSummaryPath;
+      const summary = readFileSync(summaryPath, "utf8");
+
+      expect(summary).toContain("## Applied");
+      expect(summary).toContain("## User-Facing Summary");
+      expect(summary).not.toContain("I wrote the decision summary file.");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("automation run sends the full Codex prompt through stdin for Windows command shims", async () => {
     const root = join(tmpdir(), `ccagent-codex-stdin-${Date.now()}-${Math.random()}`);
     const capturePath = join(root, "captured-codex.jsonl");
@@ -1591,6 +1680,88 @@ describe("daemon API", () => {
       });
       expect(output.content).toContain('"codexContinueRequested": true');
       expect(output.content).toContain("codex_continue=yes");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run localizes Codex summary prompt and final report for Chinese runs", async () => {
+    const root = join(tmpdir(), `ccagent-zh-report-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# 草稿\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41017, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls === 1) {
+              writeFileSync(targetPath, "# 已修改\n", "utf8");
+              return { exitCode: 0, content: "已修改目标文档" };
+            }
+            return {
+              exitCode: 0,
+              content: [
+                "## 已采纳",
+                "- 已更新标题。",
+                "",
+                "## Continue Decision",
+                "continue: yes",
+                "reason: 需要再次评审",
+                "confidence: high",
+                "next_focus:",
+                "- 复查标题。",
+                "risk_flags:",
+                "- changed-target-document"
+              ].join("\n")
+            };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full-zh",
+        codexTemplateId: "default-codex-edit-zh",
+        language: "Chinese",
+        maxIterations: 1
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+      const iterationDir = join(completed.outputDir, "iterations", "iteration-001");
+      const summaryPrompt = readFileSync(join(iterationDir, "codex-decision-summary-prompt.md"), "utf8");
+      const finalReport = readFileSync(completed.finalReportPath, "utf8");
+
+      expect(summaryPrompt).toContain("请准备 CCAgent 多 provider 评审运行的面向用户决策摘要。");
+      expect(summaryPrompt).toContain("请使用中文输出面向用户的章节内容");
+      expect(summaryPrompt).toContain("continue: yes|no");
+      expect(finalReport).toContain("# CCAgent 自动化最终报告");
+      expect(finalReport).toContain("已达到最大迭代轮次 (1)。");
+      expect(finalReport).toContain("## 迭代记录");
+      expect(finalReport).toContain("第 1 轮");
+      expect(finalReport).not.toContain("# CCAgent Automation Final Report");
+      expect(finalReport).not.toContain("Reached maximum iteration count");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

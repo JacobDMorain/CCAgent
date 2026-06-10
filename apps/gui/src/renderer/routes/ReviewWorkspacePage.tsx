@@ -1,21 +1,26 @@
 import type { AutomationRunRequest, PromptTemplate, ProviderConfig } from "@ccagent/core";
+import type { Locale, Translator } from "../i18n.js";
 
 export interface ReviewWorkspacePageProps {
+  locale: Locale;
+  t: Translator;
   providers: ProviderConfig[];
   templates: PromptTemplate[];
   onStart(request: AutomationRunRequest): void | Promise<void>;
 }
 
-export function ReviewWorkspacePage({ providers, templates, onStart }: ReviewWorkspacePageProps) {
+export function ReviewWorkspacePage({ locale, t, providers, templates, onStart }: ReviewWorkspacePageProps) {
   const claudeTemplates = templates.filter((template) => template.kind === "claude-review");
   const codexTemplates = templates.filter((template) => template.kind === "codex-edit");
+  const defaultClaudeTemplateId = preferredTemplateId(claudeTemplates, locale, "default-claude-review-full");
+  const defaultCodexTemplateId = preferredTemplateId(codexTemplates, locale, "default-codex-edit");
 
   return (
     <section className="page-section" id="review-workspace">
       <header className="section-header">
         <div>
-          <h2>Review Workspace</h2>
-          <p>Configure the target file, reviewers, templates, and start fully automatic review/edit.</p>
+          <h2>{t("reviewWorkspaceTitle")}</h2>
+          <p>{t("reviewWorkspaceDescription")}</p>
         </div>
       </header>
       <form
@@ -41,44 +46,44 @@ export function ReviewWorkspacePage({ providers, templates, onStart }: ReviewWor
       >
         <div className="form-grid">
           <label>
-            <span>Workspace root</span>
+            <span>{t("workspaceRoot")}</span>
             <input name="cwd" placeholder="D:/project" required />
           </label>
           <label>
-            <span>Target file</span>
+            <span>{t("targetFile")}</span>
             <input name="file" placeholder="docs/handoff.md" required />
           </label>
           <label>
-            <span>Claude review template</span>
-            <select name="claudeTemplateId" required>
+            <span>{t("claudeReviewTemplate")}</span>
+            <select name="claudeTemplateId" required defaultValue={defaultClaudeTemplateId}>
               {claudeTemplates.map((template) => (
                 <option key={template.id} value={template.id}>{template.name}</option>
               ))}
             </select>
           </label>
           <label>
-            <span>Codex edit template</span>
-            <select name="codexTemplateId" required>
+            <span>{t("codexEditTemplate")}</span>
+            <select name="codexTemplateId" required defaultValue={defaultCodexTemplateId}>
               {codexTemplates.map((template) => (
                 <option key={template.id} value={template.id}>{template.name}</option>
               ))}
             </select>
           </label>
           <label>
-            <span>Review style</span>
+            <span>{t("reviewStyle")}</span>
             <select name="reviewStyle" defaultValue="full">
-              <option value="full">Full</option>
-              <option value="bugs">Bugs</option>
-              <option value="architecture">Architecture</option>
-              <option value="language">Language</option>
+              <option value="full">{t("reviewStyleFull")}</option>
+              <option value="bugs">{t("reviewStyleBugs")}</option>
+              <option value="architecture">{t("reviewStyleArchitecture")}</option>
+              <option value="language">{t("reviewStyleLanguage")}</option>
             </select>
           </label>
           <label>
-            <span>Language</span>
-            <input name="language" placeholder="Chinese" />
+            <span>{t("language")}</span>
+            <input name="language" placeholder={locale === "zh" ? "中文" : "English"} defaultValue={locale === "zh" ? "Chinese" : "English"} />
           </label>
           <label>
-            <span>Max iterations</span>
+            <span>{t("maxIterations")}</span>
             <input name="maxIterations" type="number" min="1" max="10" defaultValue="3" />
           </label>
         </div>
@@ -95,11 +100,16 @@ export function ReviewWorkspacePage({ providers, templates, onStart }: ReviewWor
           ))}
         </div>
         <div className="button-row">
-          <button type="submit">Start fully automatic run</button>
+          <button type="submit">{t("startFullyAutomaticRun")}</button>
         </div>
       </form>
     </section>
   );
+}
+
+function preferredTemplateId(templates: PromptTemplate[], locale: Locale, fallbackId: string): string | undefined {
+  const localizedId = locale === "zh" ? `${fallbackId}-zh` : fallbackId;
+  return templates.find((template) => template.id === localizedId)?.id ?? templates[0]?.id;
 }
 
 function stringField(form: FormData, name: string): string {

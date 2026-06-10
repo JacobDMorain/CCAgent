@@ -493,7 +493,8 @@ export class AutomationManager {
         reviewPacketPath: run.reviewPacketPath,
         codexOutputPath: outputPath,
         diffPath,
-        summaryPath: decisionSummaryPath
+        summaryPath: decisionSummaryPath,
+        language: run.language
       });
       writeFileSync(decisionPromptPath, decisionPrompt, "utf8");
       const decisionOutput = await this.orchestration.runCodex({
@@ -507,7 +508,11 @@ export class AutomationManager {
         onStderr: (text) => appendFileSync(stderrPath, text, "utf8"),
         signal: controller.signal
       });
-      writeFileSync(decisionSummaryPath, decisionOutput.content, "utf8");
+      writeFileSync(
+        decisionSummaryPath,
+        resolveDecisionSummaryContent(decisionOutput.content, decisionSummaryPath),
+        "utf8"
+      );
       if (decisionOutput.exitCode !== 0) {
         throw new CCAgentError("CCAGENT_CODEX_SUMMARY_EXIT", `Codex summary exited with code ${decisionOutput.exitCode}`);
       }
@@ -623,7 +628,8 @@ export class AutomationManager {
       diffPath,
       summaryPath: decisionSummaryPath,
       iteration: input.iteration,
-      maxIterations: request.maxIterations
+      maxIterations: request.maxIterations,
+      language: run.language
     });
     writeFileSync(decisionPromptPath, decisionPrompt, "utf8");
     const decisionOutput = await this.orchestration.runCodex({
@@ -637,7 +643,8 @@ export class AutomationManager {
       onStderr: (text) => appendFileSync(stderrPath, text, "utf8"),
       signal: controller.signal
     });
-    writeFileSync(decisionSummaryPath, decisionOutput.content, "utf8");
+    const decisionSummary = resolveDecisionSummaryContent(decisionOutput.content, decisionSummaryPath);
+    writeFileSync(decisionSummaryPath, decisionSummary, "utf8");
     if (decisionOutput.exitCode !== 0) {
       throw new CCAgentError("CCAGENT_CODEX_SUMMARY_EXIT", `Codex summary exited with code ${decisionOutput.exitCode}`);
     }
@@ -646,7 +653,8 @@ export class AutomationManager {
       iteration: input.iteration,
       maxIterations: request.maxIterations,
       diff,
-      summary: decisionOutput.content
+      summary: decisionSummary,
+      language: run.language
     });
     writeJsonFile(stopDecisionPath, stopDecision);
     const finishedAt = now();
@@ -710,27 +718,28 @@ export class AutomationManager {
 
   private writeFinalReport(runId: string, message: string): string {
     const run = this.getRun(runId);
+    const chinese = isChineseLanguage(run.language);
     const path = join(run.outputDir, "final-report.md");
     const iterationLines = run.iterations.length > 0
       ? [
           "",
-          "## Iterations",
+          chinese ? "## 迭代记录" : "## Iterations",
           ...run.iterations.map((iteration) =>
-            `- Iteration ${iteration.iteration}: ${iteration.status}; changes=${iteration.changesDetected ? "yes" : "no"}; continue=${iteration.continueRequested === undefined ? "unknown" : iteration.continueRequested ? "yes" : "no"}; codex_continue=${iteration.codexContinueRequested === undefined ? "unknown" : iteration.codexContinueRequested ? "yes" : "no"}; confidence=${iteration.decisionConfidence ?? "unknown"}; reason=${iteration.stopReason ?? "n/a"}${iteration.nextFocus?.length ? `; next_focus=${iteration.nextFocus.join(" | ")}` : ""}${iteration.riskFlags?.length ? `; risk_flags=${iteration.riskFlags.join(" | ")}` : ""}`
+            `${chinese ? `第 ${iteration.iteration} 轮` : `Iteration ${iteration.iteration}`}: ${iteration.status}; changes=${iteration.changesDetected ? "yes" : "no"}; continue=${iteration.continueRequested === undefined ? "unknown" : iteration.continueRequested ? "yes" : "no"}; codex_continue=${iteration.codexContinueRequested === undefined ? "unknown" : iteration.codexContinueRequested ? "yes" : "no"}; confidence=${iteration.decisionConfidence ?? "unknown"}; reason=${iteration.stopReason ?? "n/a"}${iteration.nextFocus?.length ? `; next_focus=${iteration.nextFocus.join(" | ")}` : ""}${iteration.riskFlags?.length ? `; risk_flags=${iteration.riskFlags.join(" | ")}` : ""}`
           )
         ]
       : [];
     writeFileSync(
       path,
       [
-        "# CCAgent Automation Final Report",
+        chinese ? "# CCAgent 自动化最终报告" : "# CCAgent Automation Final Report",
         "",
         message,
         "",
-        `Run: ${run.id}`,
-        `Target: ${run.file}`,
-        `Status: ${this.getRun(runId).status}`,
-        `Max iterations: ${run.maxIterations}`,
+        chinese ? `运行 ID: ${run.id}` : `Run: ${run.id}`,
+        chinese ? `目标文件: ${run.file}` : `Target: ${run.file}`,
+        chinese ? `状态: ${this.getRun(runId).status}` : `Status: ${this.getRun(runId).status}`,
+        chinese ? `最大迭代轮次: ${run.maxIterations}` : `Max iterations: ${run.maxIterations}`,
         ...iterationLines
       ].join("\n"),
       "utf8"
@@ -838,6 +847,7 @@ function decideIterationContinuation(input: {
   maxIterations: number;
   diff: string;
   summary: string;
+  language?: string;
 }): IterationStopDecision {
   const changesDetected = hasTargetDocumentChanges(input.diff);
   const structured = parseStructuredContinueDecision(input.summary);
@@ -850,7 +860,9 @@ function decideIterationContinuation(input: {
       confidence: structured?.confidence ?? "high",
       nextFocus: structured?.nextFocus,
       riskFlags: structured?.riskFlags,
-      reason: `Reached maximum iteration count (${input.maxIterations}).`,
+      reason: isChineseLanguage(input.language)
+        ? `已达到最大迭代轮次 (${input.maxIterations})。`
+        : `Reached maximum iteration count (${input.maxIterations}).`,
       source: "max-iterations"
     };
   }
@@ -1158,7 +1170,58 @@ function buildCodexDecisionSummaryPrompt(input: {
   summaryPath: string;
   iteration?: number;
   maxIterations?: number;
+  language?: string;
 }): string {
+  if (isChineseLanguage(input.language)) {
+    return [
+      "请准备 CCAgent 多 provider 评审运行的面向用户决策摘要。",
+      "",
+      `Run id: ${input.runId}`,
+      input.iteration ? `Iteration: ${input.iteration}` : "",
+      input.maxIterations ? `Max iterations: ${input.maxIterations}` : "",
+      `Target document: ${input.targetDocument}`,
+      `Review packet: ${input.reviewPacketPath}`,
+      `Codex edit output: ${input.codexOutputPath}`,
+      `Target document diff: ${input.diffPath}`,
+      `Write the final summary to: ${input.summaryPath}`,
+      "",
+      "读取 review packet、Codex edit output 和 target document diff。",
+      "请总结 Codex 对 provider review 意见的采纳、拒绝和延后结论，并以 target document diff 作为实际文档修改的事实来源。",
+      "本阶段不要修改目标文档或任何源码文件。",
+      "请使用中文输出面向用户的章节内容，但保留下方机器可解析字段名和值为英文。",
+      "只返回以下结构的决策摘要：",
+      "",
+      "## 已采纳",
+      "- Provider 发现或主题:",
+      "  - 决策:",
+      "  - 实际文档修改:",
+      "",
+      "## 已拒绝",
+      "- Provider 发现或主题:",
+      "  - 原因:",
+      "",
+      "## 已延后",
+      "- Provider 发现或主题:",
+      "  - 原因:",
+      "",
+      "## 修改文件",
+      "- Path:",
+      "  - Summary:",
+      "",
+      "## 面向用户总结",
+      "用一个简短段落说明被评审文档发生了什么修改。",
+      "",
+      "## Continue Decision",
+      "continue: yes|no",
+      "reason: One sentence. If Codex changed the target document in this iteration, strongly prefer continue: yes so providers can re-review the modified document. Use continue: no after making changes only when you have a concrete reason that another provider review round would not add useful signal, and state that reason explicitly. If Codex made no target-document changes and no actionable findings remain, use continue: no.",
+      "confidence: high|medium|low",
+      "next_focus:",
+      "- One concrete focus area for the next provider review, or `none` if stopping.",
+      "risk_flags:",
+      "- Use short machine-readable flags such as changed-target-document, empty-diff, summary-diff-mismatch, non-target-file-change, provider-disagreement, or none."
+    ].filter(Boolean).join("\n");
+  }
+
   return [
     "You are preparing the user-facing decision summary for a CCAgent multi-provider review run.",
     "",
@@ -1205,6 +1268,35 @@ function buildCodexDecisionSummaryPrompt(input: {
     "risk_flags:",
     "- Use short machine-readable flags such as changed-target-document, empty-diff, summary-diff-mismatch, non-target-file-change, provider-disagreement, or none."
   ].filter(Boolean).join("\n");
+}
+
+function isChineseLanguage(language: string | undefined): boolean {
+  const normalized = language?.toLowerCase() ?? "";
+  return normalized.includes("chinese") || normalized.startsWith("zh") || normalized.includes("中文");
+}
+
+function resolveDecisionSummaryContent(stdout: string, summaryPath: string): string {
+  if (looksLikeDecisionSummary(stdout)) {
+    return stdout;
+  }
+  if (existsSync(summaryPath)) {
+    const fileContent = readFileSync(summaryPath, "utf8");
+    if (looksLikeDecisionSummary(fileContent)) {
+      return fileContent;
+    }
+  }
+  return stdout;
+}
+
+function looksLikeDecisionSummary(content: string): boolean {
+  const groups = [
+    ["## Applied", "## 已采纳"],
+    ["## Rejected", "## 已拒绝"],
+    ["## Deferred", "## 已延后"],
+    ["## User-Facing Summary", "## 面向用户总结"],
+    ["## Continue Decision"]
+  ];
+  return groups.filter((group) => group.some((heading) => content.includes(heading))).length >= 3;
 }
 
 function writeDiagnostic(path: string | undefined, text: string): void {

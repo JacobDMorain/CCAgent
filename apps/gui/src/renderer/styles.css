@@ -50,6 +50,18 @@ textarea {
   background: #344751;
 }
 
+.language-switch {
+  margin-top: auto;
+}
+
+.language-switch span {
+  color: #d8e6ee;
+}
+
+.language-switch select {
+  color: #172026;
+}
+
 .workspace {
   display: grid;
   gap: 18px;
@@ -340,6 +352,40 @@ button:disabled {
   border-radius: 6px;
   white-space: pre-wrap;
   background: #f8fafb;
+}
+
+.status-viewer {
+  margin-top: 12px;
+}
+
+.status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-tabs button {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+.status-tabs button.selected {
+  border-color: #5d7f95;
+  background: #dbeaf1;
+}
+
+.status-viewer .output-viewer {
+  margin-top: 8px;
+}
+
+.status-warning {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e2c16b;
+  border-radius: 6px;
+  color: #624b12;
+  background: #fff8df;
+  font-size: 13px;
 }
 
 .status-bar {

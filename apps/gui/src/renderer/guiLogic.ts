@@ -1,4 +1,19 @@
 import type { AutomationRunRecord, ProviderConfig } from "@ccagent/core";
+import type { Locale } from "./i18n.js";
+
+export interface RunDecisionIterationDetail {
+  iteration: number;
+  label: string;
+  content: string;
+  warnings?: string[];
+}
+
+export interface RunDecisionDetails {
+  overview: string;
+  iterations: RunDecisionIterationDetail[];
+  selectedIteration?: number;
+  defaultIteration?: number;
+}
 
 export function buildProviderFromForm(
   form: FormData,
@@ -55,9 +70,15 @@ export function formatOutput(output: unknown): string {
   return typeof output === "string" ? output : JSON.stringify(output, null, 2);
 }
 
-export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: string): string {
+export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: string, locale: Locale = "en"): string {
   if (run.status === "failed") {
     const reason = parseErrorMessage(run.errorJson);
+    if (locale === "zh") {
+      return [
+        `Codex 未能为 ${run.file} 生成评审决策。`,
+        reason ? `原因: ${reason.replace(/^CCAGENT_[A-Z_]+:\s*/, "")}` : undefined
+      ].filter(Boolean).join("\n");
+    }
     return [
       `Codex did not produce a review decision for ${run.file}.`,
       reason ? `Reason: ${reason.replace(/^CCAGENT_[A-Z_]+:\s*/, "")}` : undefined
@@ -70,21 +91,49 @@ export function formatRunDecisionSummary(run: AutomationRunRecord, runOutput: st
   const codexOutput = finalReport || decisionSummary || latestIterationSummary || extractOutputSection(runOutput, "codex-output.md");
   if (codexOutput) {
     return [
-      `Codex review decision for ${run.file}:`,
+      locale === "zh"
+        ? `Codex 对 ${run.file} 的评审决策:`
+        : `Codex review decision for ${run.file}:`,
       "",
       codexOutput
     ].join("\n");
   }
 
   if (run.status === "codex_editing" || run.status === "verifying") {
+    if (locale === "zh") {
+      return `Codex 仍在审核 provider 反馈: ${run.file}。`;
+    }
     return `Codex is still reviewing provider feedback for ${run.file}.`;
   }
 
   if (run.status === "reviewing" || run.status === "merging" || run.status === "queued") {
+    if (locale === "zh") {
+      return `Provider 评审仍在运行: ${run.file}。Codex 尚未生成评审决策。`;
+    }
     return `Provider review is still running for ${run.file}. Codex has not produced a review decision yet.`;
   }
 
+  if (locale === "zh") {
+    return `没有可用于 ${run.file} 的 Codex 评审决策。`;
+  }
   return `No Codex review decision is available for ${run.file}.`;
+}
+
+export function buildRunDecisionDetails(
+  run: AutomationRunRecord,
+  runOutput: string,
+  locale: Locale = "en",
+  selectedIteration?: number
+): RunDecisionDetails {
+  const overview = formatRunDecisionSummary(run, runOutput, locale);
+  const iterations = extractIterationDecisionSummaries(runOutput, locale);
+  const defaultIteration = iterations.at(-1)?.iteration;
+  return {
+    overview,
+    iterations,
+    defaultIteration,
+    selectedIteration: selectedIteration ?? defaultIteration
+  };
 }
 
 export function parseErrorMessage(errorJson?: string): string {
@@ -129,6 +178,38 @@ function extractLastOutputSection(output: string, labelSuffix: string): string {
     ? output.slice(contentStart)
     : output.slice(contentStart, nextSection);
   return rawSection.trim();
+}
+
+function extractIterationDecisionSummaries(output: string, locale: Locale): RunDecisionIterationDetail[] {
+  return [...output.matchAll(/^# iteration-(\d+)\/codex-decision-summary\.md$/gm)]
+    .map((match) => {
+      const iteration = Number(match[1]);
+      const contentStart = (match.index ?? 0) + match[0].length;
+      const nextSection = output.indexOf("\n# ", contentStart);
+      const rawSection = nextSection === -1
+        ? output.slice(contentStart)
+        : output.slice(contentStart, nextSection);
+      return {
+        iteration,
+        label: locale === "zh" ? `第 ${iteration} 轮` : `Iteration ${iteration}`,
+        content: rawSection.trim(),
+        warnings: decisionSummaryWarnings(rawSection)
+      };
+    })
+    .filter((item) => item.content.length > 0);
+}
+
+function decisionSummaryWarnings(content: string): string[] | undefined {
+  const requiredGroups = [
+    ["## Applied", "## 已采纳"],
+    ["## Rejected", "## 已拒绝"],
+    ["## Deferred", "## 已延后"],
+    ["## User-Facing Summary", "## 面向用户总结"]
+  ];
+  const missing = requiredGroups.some((group) => !group.some((heading) => content.includes(heading)));
+  return missing
+    ? ["Decision summary is missing accepted, rejected, deferred, or user-facing summary sections."]
+    : undefined;
 }
 
 export function toRuntimeError(error: unknown): { code: string; message: string } {

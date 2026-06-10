@@ -5,7 +5,14 @@ import { ReviewWorkspacePage } from "./routes/ReviewWorkspacePage.js";
 import { RunsPage } from "./routes/RunsPage.js";
 import { TemplatesPage } from "./routes/TemplatesPage.js";
 import { TasksPage } from "./routes/TasksPage.js";
-import { formatOutput, formatRunDecisionSummary, toRuntimeError, upsertProvider } from "./guiLogic.js";
+import {
+  buildRunDecisionDetails,
+  formatOutput,
+  toRuntimeError,
+  upsertProvider,
+  type RunDecisionDetails
+} from "./guiLogic.js";
+import { createTranslator, normalizeLocale, type Locale } from "./i18n.js";
 import type { GuiApi, GuiTaskRecord } from "./types.js";
 
 export interface AppProps {
@@ -14,6 +21,7 @@ export interface AppProps {
   initialRuns?: AutomationRunRecord[];
   initialTemplates?: PromptTemplate[];
   initialWorkspaceRoots?: string[];
+  initialLocale?: Locale;
   daemonError?: { code: string; message: string };
 }
 
@@ -23,9 +31,20 @@ export function App({
   initialRuns = [],
   initialTemplates = [],
   initialWorkspaceRoots = [],
+  initialLocale,
   daemonError
 }: AppProps) {
   const api = typeof window === "undefined" ? undefined : window.ccagent;
+  const [locale, setLocale] = useState<Locale>(() => {
+    if (initialLocale) {
+      return initialLocale;
+    }
+    if (typeof window === "undefined") {
+      return "en";
+    }
+    return normalizeLocale(window.localStorage.getItem("ccagent.locale") ?? window.navigator.language);
+  });
+  const t = useMemo(() => createTranslator(locale), [locale]);
   const [providers, setProviders] = useState(initialProviders);
   const [tasks, setTasks] = useState(initialTasks);
   const [runs, setRuns] = useState(initialRuns);
@@ -39,7 +58,13 @@ export function App({
   const [statusMessage, setStatusMessage] = useState("");
   const [runtimeError, setRuntimeError] = useState(daemonError);
   const [selectedOutput, setSelectedOutput] = useState<{ kind: "run" | "task"; id: string; content: string } | undefined>();
-  const [selectedRunStatus, setSelectedRunStatus] = useState<{ id: string; content: string } | undefined>();
+  const [selectedRunStatus, setSelectedRunStatus] = useState<{ id: string; content: RunDecisionDetails } | undefined>();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("ccagent.locale", locale);
+    }
+  }, [locale]);
 
   useEffect(() => {
     if (!api) {
@@ -64,27 +89,43 @@ export function App({
     () => providers.find((provider) => provider.id === selectedProviderId) ?? providers[0],
     [providers, selectedProviderId]
   );
+  const visibleTemplates = useMemo(
+    () => templates.filter((template) => isTemplateVisibleForLocale(template.id, locale)),
+    [templates, locale]
+  );
 
   return (
     <main className="app-shell">
       <nav className="sidebar" aria-label="Primary">
         <h1>CCAgent</h1>
-        <a href="#review-workspace">Review Workspace</a>
-        <a href="#providers">Providers</a>
-        <a href="#templates">Prompt Templates</a>
-        <a href="#runs">Runs</a>
-        <a href="#tasks">Tasks</a>
-        <a href="#settings">Settings</a>
+        <a href="#review-workspace">{t("navReviewWorkspace")}</a>
+        <a href="#providers">{t("navProviders")}</a>
+        <a href="#templates">{t("navTemplates")}</a>
+        <a href="#runs">{t("navRuns")}</a>
+        <a href="#tasks">{t("navTasks")}</a>
+        <a href="#settings">{t("navSettings")}</a>
+        <label className="language-switch">
+          <span>{t("language")}</span>
+          <select
+            value={locale}
+            onChange={(event) => setLocale(normalizeLocale(event.currentTarget.value))}
+          >
+            <option value="zh">{t("chinese")}</option>
+            <option value="en">{t("english")}</option>
+          </select>
+        </label>
       </nav>
       <div className="workspace">
         <ReviewWorkspacePage
+          locale={locale}
+          t={t}
           providers={providers}
-          templates={templates}
+          templates={visibleTemplates}
           onStart={async (request) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, "Starting automation run...", async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("startingAutomationRun"), async () => {
               const nextRoots = Array.from(new Set([...workspaceRoots, request.cwd]));
               if (nextRoots.length !== workspaceRoots.length) {
                 const settings = await api.setWorkspaceRoots(nextRoots);
@@ -92,11 +133,12 @@ export function App({
               }
               const run = await api.createAutomationRun(request);
               setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
-              return `Started automation run ${run.id}`;
+              return t("startedAutomationRun", { id: run.id });
             });
           }}
         />
         <ProvidersPage
+          t={t}
           providers={providers}
           selectedProviderId={selectedProvider?.id}
           onSelectProvider={setSelectedProviderId}
@@ -104,63 +146,65 @@ export function App({
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Saving provider ${provider.id}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("savingProvider", { id: provider.id }), async () => {
               const saved = await api.saveProvider(provider, apiKey);
               setProviders((current) => upsertProvider(current, saved));
               setSelectedProviderId(saved.id);
-              return `Saved provider ${saved.id}`;
+              return t("savedProvider", { id: saved.id });
             });
           }}
           onDeleteProvider={async (providerId) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Deleting provider ${providerId}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("deletingProvider", { id: providerId }), async () => {
               await api.deleteProvider(providerId);
               setProviders((current) => current.filter((provider) => provider.id !== providerId));
               setSelectedProviderId((current) => current === providerId ? undefined : current);
-              return `Deleted provider ${providerId}`;
+              return t("deletedProvider", { id: providerId });
             });
           }}
           onTestProvider={async (provider, apiKey) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Testing provider ${provider.id}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("testingProvider", { id: provider.id }), async () => {
               const saved = await api.saveProvider(provider, apiKey);
               setProviders((current) => upsertProvider(current, saved));
               setSelectedProviderId(saved.id);
               await api.testProvider(saved.id, saved.models.review ?? saved.models.default);
-              return `Provider test succeeded: ${saved.id}`;
+              return t("providerTestSucceeded", { id: saved.id });
             });
           }}
         />
         <TemplatesPage
-          templates={templates}
+          t={t}
+          templates={visibleTemplates}
           onSave={async (template) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Saving template ${template.id}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("savingTemplate", { id: template.id }), async () => {
               const saved = await api.savePromptTemplate(template);
               setTemplates((current) =>
                 current.map((item) => (item.id === saved.id ? saved : item))
               );
-              return `Saved template ${saved.id}`;
+              return t("savedTemplate", { id: saved.id });
             });
           }}
           onDelete={async (templateId) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Deleting template ${templateId}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("deletingTemplate", { id: templateId }), async () => {
               await api.deletePromptTemplate(templateId);
               setTemplates((current) => current.filter((template) => template.id !== templateId));
-              return `Deleted template ${templateId}`;
+              return t("deletedTemplate", { id: templateId });
             });
           }}
         />
         <RunsPage
+          t={t}
           runs={runs}
           selectedOutput={selectedOutput?.kind === "run" ? selectedOutput.content : undefined}
           selectedOutputRunId={selectedOutput?.kind === "run" ? selectedOutput.id : undefined}
@@ -170,10 +214,10 @@ export function App({
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Cancelling run ${runId}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("cancellingRun", { id: runId }), async () => {
               await api.cancelAutomationRun(runId);
               await refreshRuns(api, setRuns, setRuntimeError);
-              return `Cancelled run ${runId}`;
+              return t("cancelledRun", { id: runId });
             });
           }}
           onShowStatus={async (run) => {
@@ -182,14 +226,28 @@ export function App({
             }
             if (selectedRunStatus?.id === run.id) {
               setSelectedRunStatus(undefined);
-              setStatusMessage(`Collapsed run ${run.id} decision summary`);
+              setStatusMessage(t("collapsedRunDecisionSummary", { id: run.id }));
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Loading Codex decision summary for ${run.id}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("loadingRunDecisionSummary", { id: run.id }), async () => {
               const output = await api.readAutomationRunOutput(run.id);
-              const content = formatRunDecisionSummary(run, formatOutput(output));
+              const content = buildRunDecisionDetails(run, formatOutput(output), locale);
               setSelectedRunStatus({ id: run.id, content });
-              return `Loaded Codex decision summary for ${run.id}`;
+              return t("loadedRunDecisionSummary", { id: run.id });
+            });
+          }}
+          onSelectStatusIteration={(runId, iteration) => {
+            setSelectedRunStatus((current) => {
+              if (!current || current.id !== runId) {
+                return current;
+              }
+              return {
+                ...current,
+                content: {
+                  ...current.content,
+                  selectedIteration: iteration
+                }
+              };
             });
           }}
           onReadOutput={async (runId) => {
@@ -198,20 +256,20 @@ export function App({
             }
             if (selectedOutput?.kind === "run" && selectedOutput.id === runId) {
               setSelectedOutput(undefined);
-              setStatusMessage(`Collapsed run ${runId} output`);
+              setStatusMessage(t("collapsedRunOutput", { id: runId }));
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Reading run ${runId} output...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("readingRunOutput", { id: runId }), async () => {
               const output = await api.readAutomationRunOutput(runId);
               setSelectedOutput({ kind: "run", id: runId, content: formatOutput(output) });
-              return `Loaded run ${runId} output`;
+              return t("loadedRunOutput", { id: runId });
             });
           }}
           onDelete={async (runId) => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Deleting run ${runId}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("deletingRun", { id: runId }), async () => {
               await api.deleteAutomationRun(runId);
               setRuns((current) => current.filter((run) => run.id !== runId));
               if (selectedOutput?.kind === "run" && selectedOutput.id === runId) {
@@ -220,11 +278,12 @@ export function App({
               if (selectedRunStatus?.id === runId) {
                 setSelectedRunStatus(undefined);
               }
-              return `Deleted run ${runId}`;
+              return t("deletedRun", { id: runId });
             });
           }}
         />
         <TasksPage
+          t={t}
           tasks={tasks}
           selectedOutput={selectedOutput?.kind === "task" ? selectedOutput.content : undefined}
           selectedOutputTaskId={selectedOutput?.kind === "task" ? selectedOutput.id : undefined}
@@ -232,10 +291,10 @@ export function App({
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Cancelling task ${taskId}...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("cancellingTask", { id: taskId }), async () => {
               await api.cancelTask(taskId);
               await refreshTasks(api, setTasks, setRuntimeError);
-              return `Cancelled task ${taskId}`;
+              return t("cancelledTask", { id: taskId });
             });
           }}
           onReadTaskOutput={async (taskId) => {
@@ -244,30 +303,30 @@ export function App({
             }
             if (selectedOutput?.kind === "task" && selectedOutput.id === taskId) {
               setSelectedOutput(undefined);
-              setStatusMessage(`Collapsed task ${taskId} output`);
+              setStatusMessage(t("collapsedTaskOutput", { id: taskId }));
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, `Reading task ${taskId} output...`, async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("readingTaskOutput", { id: taskId }), async () => {
               const output = await api.readTaskOutput(taskId);
               setSelectedOutput({ kind: "task", id: taskId, content: formatOutput(output) });
-              return `Loaded task ${taskId} output`;
+              return t("loadedTaskOutput", { id: taskId });
             });
           }}
           onClearTasks={async () => {
             if (!api) {
               return;
             }
-            await runAction(setRuntimeError, setStatusMessage, "Clearing task history...", async () => {
+            await runAction(setRuntimeError, setStatusMessage, t("clearingTaskHistory"), async () => {
               await api.clearTasks();
               setTasks([]);
               setSelectedOutput((current) => current?.kind === "task" ? undefined : current);
-              return "Task history cleared";
+              return t("taskHistoryCleared");
             });
           }}
         />
         <section className="page-section" id="settings">
           <header>
-            <h2>Settings</h2>
+            <h2>{t("settingsTitle")}</h2>
           </header>
           <form
             className="runtime-form"
@@ -276,7 +335,7 @@ export function App({
               if (!api) {
                 return;
               }
-              await runAction(setRuntimeError, setStatusMessage, "Saving runtime settings...", async () => {
+              await runAction(setRuntimeError, setStatusMessage, t("savingRuntimeSettings"), async () => {
                 const response = await api.saveRuntimeSettings({
                   claudePath,
                   codexPath
@@ -284,44 +343,44 @@ export function App({
                 setClaudePath(response.claudePath);
                 setCodexPath(response.codexPath);
                 setWorkspaceRoots(response.allowedRoots);
-                return "Runtime settings saved";
+                return t("runtimeSettingsSaved");
               });
             }}
           >
             <label>
-              <span>Claude Code CLI path</span>
+              <span>{t("claudeCodeCliPath")}</span>
               <input
                 value={claudePath}
                 onChange={(event) => setClaudePath(event.currentTarget.value)}
               />
             </label>
             <label>
-              <span>Codex CLI path</span>
+              <span>{t("codexCliPath")}</span>
               <input
                 value={codexPath}
                 onChange={(event) => setCodexPath(event.currentTarget.value)}
               />
             </label>
-            <button type="submit">Save runtime settings</button>
+            <button type="submit">{t("saveRuntimeSettings")}</button>
             <button
               type="button"
               onClick={async () => {
                 if (!api) {
                   return;
                 }
-                await runAction(setRuntimeError, setStatusMessage, "Testing Codex CLI...", async () => {
+                await runAction(setRuntimeError, setStatusMessage, t("testingCodexCli"), async () => {
                   const result = await api.testCodex();
-                  return `Codex CLI ok: ${result.version || result.codexPath}`;
+                  return t("codexCliOk", { value: result.version || result.codexPath });
                 });
               }}
             >
-              Test Codex
+              {t("testCodex")}
             </button>
           </form>
         </section>
       </div>
       <footer className={`status-bar ${runtimeError ? "status-bar-error" : ""}`}>
-        {runtimeError ? `${runtimeError.code}: ${runtimeError.message}` : statusMessage || "Ready"}
+        {runtimeError ? `${runtimeError.code}: ${runtimeError.message}` : statusMessage || t("ready")}
       </footer>
     </main>
   );
@@ -415,4 +474,8 @@ async function runAction(
     setRuntimeError(runtimeError);
     setStatusMessage(runtimeError.message);
   }
+}
+
+function isTemplateVisibleForLocale(templateId: string, locale: Locale): boolean {
+  return locale === "zh" ? templateId.endsWith("-zh") : !templateId.endsWith("-zh");
 }

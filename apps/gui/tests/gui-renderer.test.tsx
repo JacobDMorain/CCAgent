@@ -4,6 +4,8 @@ import type { ProviderConfig } from "@ccagent/core";
 import { App } from "../src/renderer/App.js";
 import { ProviderForm } from "../src/renderer/components/ProviderForm.js";
 import { TaskTable } from "../src/renderer/components/TaskTable.js";
+import { RunsPage } from "../src/renderer/routes/RunsPage.js";
+import { createTranslator } from "../src/renderer/i18n.js";
 
 describe("GUI renderer", () => {
   test("ProviderForm renders all required provider fields without exposing saved key", () => {
@@ -66,6 +68,35 @@ describe("GUI renderer", () => {
       expect(html).toContain(heading);
     }
     expect(html).toContain("bad output");
+  });
+
+  test("RunsPage renders status iteration tabs and selected iteration content", () => {
+    const html = renderToStaticMarkup(
+      <RunsPage
+        t={createTranslator("en")}
+        runs={[runFixture]}
+        selectedStatusRunId="run_1"
+        selectedStatus={{
+          overview: "## Iterations\n- Iteration 1\n- Iteration 2",
+          iterations: [
+            { iteration: 1, label: "Iteration 1", content: "first iteration summary" },
+            { iteration: 2, label: "Iteration 2", content: "second iteration summary" }
+          ],
+          selectedIteration: 2
+        }}
+        onCancel={() => undefined}
+        onShowStatus={() => undefined}
+        onSelectStatusIteration={() => undefined}
+        onReadOutput={() => undefined}
+        onDelete={() => undefined}
+      />
+    );
+
+    expect(html).toContain("Overview");
+    expect(html).toContain("Iteration 1");
+    expect(html).toContain("Iteration 2");
+    expect(html).toContain("second iteration summary");
+    expect(html).not.toContain("first iteration summary");
   });
 
   test("App renders provider, template, task, and runtime settings surfaces", () => {
@@ -162,6 +193,78 @@ describe("GUI renderer", () => {
     expect(html).not.toContain("Workspace roots");
     expect(html).toContain("D:/project");
   });
+
+  test("App renders Chinese labels when Chinese locale is selected", () => {
+    const html = renderToStaticMarkup(
+      <App
+        initialLocale="zh"
+        initialProviders={[providerFixture]}
+        initialTasks={[]}
+        initialTemplates={[
+          {
+            id: "default-claude-review-full",
+            kind: "claude-review",
+            name: "Full Claude Review",
+            description: "Review",
+            version: 1,
+            content: "Review {file}",
+            requiredVariables: ["file"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            id: "default-codex-edit",
+            kind: "codex-edit",
+            name: "Codex Edit From Review Packet",
+            description: "Edit",
+            version: 1,
+            content: "Read {reviewPacket}",
+            requiredVariables: ["reviewPacket"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            id: "default-claude-review-full-zh",
+            kind: "claude-review",
+            name: "完整 Claude 评审",
+            description: "评审",
+            version: 1,
+            content: "评审 {file}",
+            requiredVariables: ["file"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            id: "default-codex-edit-zh",
+            kind: "codex-edit",
+            name: "Codex 根据评审包修改文档",
+            description: "修改",
+            version: 1,
+            content: "读取 {reviewPacket}",
+            requiredVariables: ["reviewPacket"],
+            isDefault: true,
+            createdAt: "2026-06-08T10:00:00.000Z",
+            updatedAt: "2026-06-08T10:00:00.000Z"
+          }
+        ]}
+      />
+    );
+
+    expect(html).toContain("评审工作区");
+    expect(html).toContain("服务商");
+    expect(html).toContain("提示词模板");
+    expect(html).toContain("启动全自动流程");
+    expect(html).toContain("最大迭代轮次");
+    expect(html).toContain("Claude Code CLI 路径");
+    expect(html).toContain("就绪");
+    expect(html).toContain("完整 Claude 评审");
+    expect(html).toContain("Codex 根据评审包修改文档");
+    expect(html).not.toContain("Full Claude Review");
+    expect(html).not.toContain("Codex Edit From Review Packet");
+  });
 });
 
 const providerFixture: ProviderConfig = {
@@ -186,4 +289,21 @@ const providerFixture: ProviderConfig = {
   enabled: true,
   createdAt: "2026-06-05T10:00:00.000Z",
   updatedAt: "2026-06-05T10:00:00.000Z"
+};
+
+const runFixture = {
+  id: "run_1",
+  status: "done" as const,
+  cwd: "D:/project",
+  file: "D:/project/docs/handoff.md",
+  reviewStyle: "full" as const,
+  claudeTemplateId: "default-claude-review-full",
+  codexTemplateId: "default-codex-edit",
+  fullyAuto: true,
+  maxIterations: 3,
+  outputDir: "D:/project/.ccagent/runs/run_1",
+  createdAt: "2026-06-08T10:00:00.000Z",
+  updatedAt: "2026-06-08T10:00:01.000Z",
+  providers: [],
+  iterations: []
 };

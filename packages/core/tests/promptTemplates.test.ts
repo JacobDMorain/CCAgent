@@ -51,11 +51,13 @@ describe("prompt templates", () => {
       .toThrow(/provider/);
   });
 
-  test("default prompt templates cover Claude review and Codex edit variables", () => {
+  test("default prompt templates cover English and Chinese Claude/Codex workflows", () => {
     const templates = createDefaultPromptTemplates("2026-06-08T10:00:00.000Z");
     const codexTemplate = templates.find((template) => template.id === "default-codex-edit");
+    const zhClaudeTemplate = templates.find((template) => template.id === "default-claude-review-full-zh");
+    const zhCodexTemplate = templates.find((template) => template.id === "default-codex-edit-zh");
 
-    expect(templates).toEqual([
+    expect(templates).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "default-claude-review-full",
         kind: "claude-review",
@@ -68,9 +70,23 @@ describe("prompt templates", () => {
         isDefault: true,
         requiredVariables: expect.arrayContaining(["targetDocument", "reviewPacket", "runId"])
       })
-    ]);
+    ]));
     expect(codexTemplate?.content).toContain("adjudicate the provider review findings");
     expect(codexTemplate?.content).toContain("Do not replace the target document with a different file");
     expect(codexTemplate?.content).toContain("You may inspect surrounding repository context");
+    expect(zhClaudeTemplate).toMatchObject({
+      kind: "claude-review",
+      name: "完整 Claude 评审",
+      isDefault: true
+    });
+    expect(zhClaudeTemplate?.content).toContain("请使用中文输出");
+    expect(zhCodexTemplate).toMatchObject({
+      kind: "codex-edit",
+      name: "Codex 根据评审包修改文档",
+      isDefault: true
+    });
+    expect(zhCodexTemplate?.content).toContain("请使用中文输出面向用户的总结");
+    expect(zhCodexTemplate?.content).toContain("continue: yes|no");
+    expect(zhCodexTemplate?.content).toContain("confidence: high|medium|low");
   });
 });

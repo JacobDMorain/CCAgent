@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { TaskTable } from "../components/TaskTable.js";
+import type { Translator } from "../i18n.js";
 import type { GuiTaskRecord } from "../types.js";
 
 export interface TasksPageProps {
+  t: Translator;
   tasks: GuiTaskRecord[];
   selectedOutput?: string;
   selectedOutputTaskId?: string;
@@ -12,6 +14,7 @@ export interface TasksPageProps {
 }
 
 export function TasksPage({
+  t,
   tasks,
   selectedOutput,
   selectedOutputTaskId,
@@ -29,19 +32,20 @@ export function TasksPage({
     <section className="page-section" id="tasks">
       <header className="section-header">
         <div>
-          <h2>Tasks</h2>
-          <p>{expanded ? "Showing tasks from the last 3 days" : "Showing the 3 most recent tasks"}</p>
+          <h2>{t("tasksTitle")}</h2>
+          <p>{expanded ? t("showingLastThreeDays") : t("showingMostRecentTasks")}</p>
         </div>
         <div className="button-row inline-row">
           <button type="button" onClick={() => setExpanded((current) => !current)}>
-            {expanded ? "Collapse" : "Expand"}
+            {expanded ? t("collapse") : t("expand")}
           </button>
           <button type="button" onClick={() => void onClearTasks?.()}>
-            Clear history
+            {t("clearHistory")}
           </button>
         </div>
       </header>
       <TaskTable
+        t={t}
         tasks={visibleTasks}
         selectedOutputTaskId={selectedOutputTaskId}
         onCancel={onCancelTask}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { ProviderConfig } from "@ccagent/core";
 import {
+  buildRunDecisionDetails,
   buildProviderFromForm,
   formatOutput,
   formatRunDecisionSummary,
@@ -170,6 +171,153 @@ describe("GUI renderer logic", () => {
     expect(summary).toContain("next_focus=Check title wording");
     expect(summary).toContain("risk_flags=changed-target-document");
     expect(summary).not.toContain("old first iteration summary");
+  });
+
+  test("buildRunDecisionDetails exposes final report and all iteration decision summaries", () => {
+    const details = buildRunDecisionDetails(
+      {
+        ...runFixture,
+        maxIterations: 3,
+        iterations: [
+          {
+            runId: "run_1",
+            iteration: 1,
+            status: "completed",
+            changesDetected: true,
+            startedAt: "2026-06-08T10:00:00.000Z"
+          },
+          {
+            runId: "run_1",
+            iteration: 2,
+            status: "stopped",
+            changesDetected: false,
+            startedAt: "2026-06-08T10:01:00.000Z"
+          }
+        ]
+      },
+      [
+        "# final-report.md",
+        "",
+        "## Iterations",
+        "- Iteration 1: completed",
+        "- Iteration 2: stopped",
+        "",
+        "# iteration-001/codex-decision-summary.md",
+        "",
+        "## Applied",
+        "- First iteration applied item.",
+        "",
+        "## Rejected",
+        "- None.",
+        "",
+        "## Deferred",
+        "- None.",
+        "",
+        "## User-Facing Summary",
+        "First iteration summary.",
+        "",
+        "# iteration-002/codex-decision-summary.md",
+        "",
+        "## Applied",
+        "- Second iteration applied item.",
+        "",
+        "## Rejected",
+        "- None.",
+        "",
+        "## Deferred",
+        "- None.",
+        "",
+        "## User-Facing Summary",
+        "Second iteration summary."
+      ].join("\n")
+    );
+
+    expect(details.overview).toContain("## Iterations");
+    expect(details.iterations).toEqual([
+      {
+        iteration: 1,
+        label: "Iteration 1",
+        content: [
+          "## Applied",
+          "- First iteration applied item.",
+          "",
+          "## Rejected",
+          "- None.",
+          "",
+          "## Deferred",
+          "- None.",
+          "",
+          "## User-Facing Summary",
+          "First iteration summary."
+        ].join("\n"),
+        warnings: undefined
+      },
+      {
+        iteration: 2,
+        label: "Iteration 2",
+        content: [
+          "## Applied",
+          "- Second iteration applied item.",
+          "",
+          "## Rejected",
+          "- None.",
+          "",
+          "## Deferred",
+          "- None.",
+          "",
+          "## User-Facing Summary",
+          "Second iteration summary."
+        ].join("\n"),
+        warnings: undefined
+      }
+    ]);
+    expect(details.defaultIteration).toBe(2);
+  });
+
+  test("buildRunDecisionDetails marks iteration summaries that miss decision sections", () => {
+    const details = buildRunDecisionDetails(
+      runFixture,
+      [
+        "# iteration-001/codex-decision-summary.md",
+        "",
+        "I wrote the decision summary file."
+      ].join("\n")
+    );
+
+    expect(details.iterations[0]).toMatchObject({
+      iteration: 1,
+      warnings: ["Decision summary is missing accepted, rejected, deferred, or user-facing summary sections."]
+    });
+  });
+
+  test("formatRunDecisionSummary localizes status wrapper and fallbacks for Chinese locale", () => {
+    const summary = formatRunDecisionSummary(
+      { ...runFixture, language: "Chinese" },
+      [
+        "# codex-decision-summary.md",
+        "",
+        "## 已采纳",
+        "- 已更新章节。"
+      ].join("\n"),
+      "zh"
+    );
+
+    expect(summary).toBe([
+      "Codex 对 D:/project/docs/handoff.md 的评审决策:",
+      "",
+      "## 已采纳",
+      "- 已更新章节。"
+    ].join("\n"));
+    expect(formatRunDecisionSummary({ ...runFixture, status: "codex_editing" }, "", "zh")).toBe(
+      "Codex 仍在审核 provider 反馈: D:/project/docs/handoff.md。"
+    );
+    expect(formatRunDecisionSummary({
+      ...runFixture,
+      status: "failed",
+      errorJson: JSON.stringify({ message: "Codex task timed out" })
+    }, "", "zh")).toBe(
+      "Codex 未能为 D:/project/docs/handoff.md 生成评审决策。\n原因: Codex task timed out"
+    );
   });
 
   test("formatRunDecisionSummary falls back to latest iteration summary when final report is missing", () => {
