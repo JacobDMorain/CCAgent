@@ -313,8 +313,8 @@ export class SqliteAutomationRunStore {
     this.database.handle
       .prepare(
         `INSERT INTO automation_run_providers
-          (run_id, provider, model, role_ids_json, task_id, status, error_json, output_path, position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (run_id, provider, model, role_ids_json, task_id, status, error_json, output_path, started_at, finished_at, position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(run_id, provider) DO UPDATE SET
           model = excluded.model,
           role_ids_json = excluded.role_ids_json,
@@ -322,6 +322,8 @@ export class SqliteAutomationRunStore {
           status = excluded.status,
           error_json = excluded.error_json,
           output_path = excluded.output_path,
+          started_at = excluded.started_at,
+          finished_at = excluded.finished_at,
           position = excluded.position`
       )
       .run(
@@ -333,6 +335,8 @@ export class SqliteAutomationRunStore {
         provider.status,
         provider.errorJson ?? null,
         provider.outputPath ?? null,
+        provider.startedAt ?? null,
+        provider.finishedAt ?? null,
         provider.position
       );
   }
@@ -434,6 +438,8 @@ interface SqliteAutomationRunProviderRow {
   status: string;
   error_json: string | null;
   output_path: string | null;
+  started_at: string | null;
+  finished_at: string | null;
   position: number;
 }
 
@@ -458,6 +464,8 @@ function sqliteProviderToRecord(row: SqliteAutomationRunProviderRow): Automation
     status: row.status as AutomationRunProviderRecord["status"],
     errorJson: row.error_json ?? undefined,
     outputPath: row.output_path ?? undefined,
+    startedAt: row.started_at ?? undefined,
+    finishedAt: row.finished_at ?? undefined,
     position: row.position
   };
 }

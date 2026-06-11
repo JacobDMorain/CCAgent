@@ -10,7 +10,7 @@ export interface ClaudeRunInput {
   claudePath: string;
   claudeArgsPrefix?: string[];
   env: Record<string, string>;
-  timeoutMs: number;
+  timeoutMs?: number;
   outputFormat: "json" | "stream-json";
   onStdout(text: string): void;
   onStderr(text: string): void;
@@ -48,9 +48,11 @@ export async function runClaude(input: ClaudeRunInput): Promise<ParsedClaudeOutp
   });
 
   return await new Promise<ParsedClaudeOutput>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      void terminate("timeout");
-    }, input.timeoutMs);
+    const timeout = input.timeoutMs && input.timeoutMs > 0
+      ? setTimeout(() => {
+          void terminate("timeout");
+        }, input.timeoutMs)
+      : undefined;
 
     const abortListener = () => {
       void terminate("cancelled");
@@ -107,7 +109,9 @@ export async function runClaude(input: ClaudeRunInput): Promise<ParsedClaudeOutp
     }
 
     function cleanup(): void {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       input.signal?.removeEventListener("abort", abortListener);
     }
   });

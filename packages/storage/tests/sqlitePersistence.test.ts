@@ -92,6 +92,8 @@ describe("SQLite persistence", () => {
           model: "glm-5.1",
           taskId: "task_persist",
           status: "succeeded",
+          startedAt: "2026-06-08T10:00:00.000Z",
+          finishedAt: "2026-06-08T10:00:01.000Z",
           position: 0
         }
       ],
@@ -143,7 +145,13 @@ describe("SQLite persistence", () => {
       id: "run_persist",
       status: "done",
       maxIterations: 3,
-      providers: [{ provider: "glm", taskId: "task_persist", status: "succeeded" }],
+      providers: [{
+        provider: "glm",
+        taskId: "task_persist",
+        status: "succeeded",
+        startedAt: "2026-06-08T10:00:00.000Z",
+        finishedAt: "2026-06-08T10:00:01.000Z"
+      }],
       iterations: [{
         iteration: 1,
         status: "stopped",

@@ -172,6 +172,8 @@ export class SqliteDatabase implements CCAgentDatabase {
         status TEXT NOT NULL,
         error_json TEXT,
         output_path TEXT,
+        started_at TEXT,
+        finished_at TEXT,
         position INTEGER NOT NULL,
         PRIMARY KEY (run_id, provider)
       );
@@ -230,6 +232,16 @@ export class SqliteDatabase implements CCAgentDatabase {
       this.handle.exec("ALTER TABLE automation_run_providers ADD COLUMN role_ids_json TEXT");
     } catch {
       // Column already exists on databases created after role-aware automation support.
+    }
+    for (const sql of [
+      "ALTER TABLE automation_run_providers ADD COLUMN started_at TEXT",
+      "ALTER TABLE automation_run_providers ADD COLUMN finished_at TEXT"
+    ]) {
+      try {
+        this.handle.exec(sql);
+      } catch {
+        // Column already exists on databases created after provider timing support.
+      }
     }
   }
 }

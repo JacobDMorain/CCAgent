@@ -101,6 +101,46 @@ describe("GUI renderer", () => {
     expect(html).not.toContain("first iteration summary");
   });
 
+  test("RunsPage renders CLI status, elapsed time, and terminate action for active runs", () => {
+    const html = renderToStaticMarkup(
+      <RunsPage
+        t={createTranslator("en")}
+        nowMs={Date.parse("2026-06-08T10:01:05.000Z")}
+        runs={[{
+          ...runFixture,
+          status: "reviewing",
+          providers: [
+            {
+              runId: "run_1",
+              provider: "glm",
+              status: "running",
+              startedAt: "2026-06-08T10:00:00.000Z",
+              position: 0
+            },
+            {
+              runId: "run_1",
+              provider: "deepseek",
+              status: "succeeded",
+              position: 1
+            }
+          ]
+        }]}
+        onCancel={() => undefined}
+        onShowStatus={() => undefined}
+        onSelectStatusIteration={() => undefined}
+        onReadOutput={() => undefined}
+        onDelete={() => undefined}
+      />
+    );
+
+    expect(html).toContain("CLI");
+    expect(html).toContain("Elapsed");
+    expect(html).toContain("Claude CLI: glm:running, deepseek:succeeded");
+    expect(html).toContain("Terminate CLI");
+    expect(html).toContain("1:05");
+    expect(html).not.toContain("disabled");
+  });
+
   test("App renders provider, template, task, and runtime settings surfaces", () => {
     const html = renderToStaticMarkup(
       <App

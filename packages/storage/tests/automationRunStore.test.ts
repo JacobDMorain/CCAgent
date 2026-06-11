@@ -70,7 +70,9 @@ describe("automation run storage", () => {
     store.updateProvider("run_1", "glm", {
       status: "succeeded",
       taskId: "task_1",
-      outputPath: "D:/project/.ccagent/runs/run_1/providers/glm/output.md"
+      outputPath: "D:/project/.ccagent/runs/run_1/providers/glm/output.md",
+      startedAt: "2026-06-08T10:00:01.000Z",
+      finishedAt: "2026-06-08T10:00:02.000Z"
     });
     store.upsertCodexTask({
       runId: "run_1",
@@ -100,7 +102,13 @@ describe("automation run storage", () => {
       id: "run_1",
       status: "reviewing",
       maxIterations: 2,
-      providers: [{ provider: "glm", status: "succeeded", taskId: "task_1" }],
+      providers: [{
+        provider: "glm",
+        status: "succeeded",
+        taskId: "task_1",
+        startedAt: "2026-06-08T10:00:01.000Z",
+        finishedAt: "2026-06-08T10:00:02.000Z"
+      }],
       codexTask: { taskId: "codex_1", status: "running" },
       iterations: [{
         iteration: 1,

@@ -31,14 +31,27 @@ export class DaemonClient {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    const response = await fetch(`${this.options.baseUrl}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        ...(body === undefined ? {} : { "content-type": "application/json" })
-      },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+    const url = `${this.options.baseUrl}${path}`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          ...(body === undefined ? {} : { "content-type": "application/json" })
+        },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+    } catch (error) {
+      throw new CCAgentError(
+        ErrorCodes.DaemonUnavailable,
+        `daemon request failed before response: ${method} ${path}`,
+        JSON.stringify({
+          url,
+          cause: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
 
     const json = await response.json().catch(() => undefined);
     if (!response.ok) {

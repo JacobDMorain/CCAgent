@@ -51,6 +51,7 @@ export interface RunTaskRequest {
   mode?: "sync" | "async";
   timeoutMs?: number;
   maxOutputBytes?: number;
+  onTaskCreated?: (taskId: string) => void;
 }
 
 export interface ReviewFileRequest {
@@ -158,6 +159,8 @@ export interface AutomationRunProviderRecord {
   status: AutomationProviderStatus;
   errorJson?: string;
   outputPath?: string;
+  startedAt?: string;
+  finishedAt?: string;
   position: number;
 }
 

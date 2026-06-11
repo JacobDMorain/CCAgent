@@ -36,6 +36,24 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("throws structured daemon unavailable error when fetch cannot connect", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    const baseUrl = await listen(server);
+    await closeServer(server);
+    servers.splice(servers.indexOf(server), 1);
+
+    const client = new DaemonClient({ baseUrl, token: "token-1" });
+
+    await expect(client.get("/review-roles/generate")).rejects.toMatchObject({
+      code: "CCAGENT_DAEMON_UNAVAILABLE",
+      message: expect.stringContaining("daemon request failed before response"),
+      detail: expect.stringContaining("/review-roles/generate")
+    });
+  });
+
   test("rotateToken updates in-memory token from response", async () => {
     const seenAuth: string[] = [];
     const server = http.createServer((req, res) => {

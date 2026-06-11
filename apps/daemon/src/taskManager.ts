@@ -66,6 +66,7 @@ export class TaskManager {
     });
     this.tasks.updateTask(taskId, { status: "running" });
     this.tasks.appendLog(taskId, "system", "Task runner started");
+    request.onTaskCreated?.(taskId);
 
     const execution = this.executeTask({
       cwd,
@@ -161,7 +162,7 @@ export class TaskManager {
         prompt: request.prompt,
         claudePath: this.settings.claude.path,
         env,
-        timeoutMs: request.timeoutMs ?? this.settings.tasks.defaultTimeoutMs,
+        timeoutMs: 0,
         outputFormat: "json",
         onStdout: (text) => this.tasks.appendLog(taskId, "stdout", redactor.redact(text)),
         onStderr: (text) => this.tasks.appendLog(taskId, "stderr", redactor.redact(text)),

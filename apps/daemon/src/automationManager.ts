@@ -24,6 +24,7 @@ import {
 import type { DaemonSettings } from "@ccagent/core";
 import { TaskManager } from "./taskManager.js";
 import { spawnCli } from "./cliSpawn.js";
+import { terminateProcessTree } from "@ccagent/runner";
 
 export interface CodexRunInput {
   runId: string;
@@ -200,10 +201,28 @@ export class AutomationManager {
     const run = this.getRun(runId);
     const now = new Date().toISOString();
     for (const provider of run.providers) {
-      if (provider.taskId && (provider.status === "queued" || provider.status === "running")) {
-        this.taskManager.cancelTask(provider.taskId);
-        this.runStore.updateProvider(runId, provider.provider, { status: "cancelled" });
+      if (provider.status === "queued" || provider.status === "running") {
+        if (provider.taskId) {
+          this.taskManager.cancelTask(provider.taskId);
+        }
+        this.runStore.updateProvider(runId, provider.provider, { status: "cancelled", finishedAt: now });
       }
+    }
+    if (run.codexTask && run.codexTask.status === "running") {
+      this.runStore.upsertCodexTask({
+        ...run.codexTask,
+        status: "cancelled",
+        finishedAt: now
+      });
+    }
+    const runningIteration = [...run.iterations].reverse().find((iteration) => iteration.status === "running");
+    if (runningIteration) {
+      this.runStore.upsertIteration({
+        ...runningIteration,
+        status: "stopped",
+        stopReason: "Cancelled by user.",
+        finishedAt: now
+      });
     }
     this.runStore.updateRun(runId, { status: "cancelled", updatedAt: now, finishedAt: now });
     return this.getRun(runId);
@@ -300,7 +319,8 @@ export class AutomationManager {
   ): Promise<void> {
     const now = () => new Date().toISOString();
     this.runStore.updateRun(runId, { status: "reviewing", updatedAt: now() });
-    await this.runReviewers(runId, request, this.getRun(runId).file);
+    await this.runReviewers(runId, request, this.getRun(runId).file, controller.signal);
+    this.throwIfCancelled(controller.signal);
     const packetPath = this.writeReviewPacket(runId);
     this.runStore.updateRun(runId, {
       status: "merging",
@@ -342,7 +362,8 @@ export class AutomationManager {
     });
 
     this.runStore.updateRun(runId, { status: "reviewing", updatedAt: now() });
-    await this.runReviewers(runId, request, targetFile, iterationDir);
+    await this.runReviewers(runId, request, targetFile, controller.signal, iterationDir);
+    this.throwIfCancelled(controller.signal);
 
     const afterReviews = this.getRun(runId);
     const successes = afterReviews.providers.filter((provider) => provider.status === "succeeded");
@@ -391,17 +412,21 @@ export class AutomationManager {
     runId: string,
     request: RequiredDefaults<AutomationRunRequest>,
     targetFile: string,
+    signal: AbortSignal,
     outputBaseDir?: string
   ): Promise<void> {
     const claudeTemplate = this.requiredTemplate(request.claudeTemplateId, "claude-review");
     await Promise.all(
       request.reviewers.map(async (reviewer) => {
+        this.throwIfCancelled(signal);
         const run = this.getRun(runId);
         const providerDir = join(outputBaseDir ?? run.outputDir, "providers", reviewer.provider);
         mkdirSync(providerDir, { recursive: true });
         this.runStore.updateProvider(runId, reviewer.provider, {
           status: "running",
-          errorJson: undefined
+          errorJson: undefined,
+          startedAt: new Date().toISOString(),
+          finishedAt: undefined
         });
         const prompt = renderPromptTemplate(claudeTemplate.content, {
           file: targetFile,
@@ -420,8 +445,15 @@ export class AutomationManager {
           files: [relative(run.cwd, targetFile)],
           mode: "sync",
           timeoutMs: request.timeoutMs,
-          maxOutputBytes: request.maxOutputBytes
+          maxOutputBytes: request.maxOutputBytes,
+          onTaskCreated: (taskId) => {
+            this.runStore.updateProvider(runId, reviewer.provider, { taskId });
+            if (signal.aborted) {
+              this.taskManager.cancelTask(taskId);
+            }
+          }
         });
+        this.throwIfCancelled(signal);
         const outputPath = join(providerDir, "output.md");
         const errorPath = join(providerDir, "error.txt");
         if (result.status === "ok") {
@@ -430,7 +462,8 @@ export class AutomationManager {
             status: "succeeded",
             taskId: result.taskId,
             outputPath,
-            errorJson: undefined
+            errorJson: undefined,
+            finishedAt: new Date().toISOString()
           });
           return;
         }
@@ -439,7 +472,8 @@ export class AutomationManager {
           status: providerStatusFromTask(result.status),
           taskId: result.taskId,
           errorJson: JSON.stringify(result.error ?? { status: result.status }),
-          outputPath: result.content ? outputPath : undefined
+          outputPath: result.content ? outputPath : undefined,
+          finishedAt: new Date().toISOString()
         });
       })
     );
@@ -786,6 +820,11 @@ export class AutomationManager {
 
   private failRun(runId: string, error: unknown): void {
     const now = new Date().toISOString();
+    const current = this.getRun(runId);
+    if (current.status === "cancelled" && error instanceof CCAgentError && error.code === ErrorCodes.Cancelled) {
+      this.activeRuns.delete(runId);
+      return;
+    }
     this.runStore.updateRun(runId, {
       status: "failed",
       errorJson: JSON.stringify({
@@ -834,8 +873,16 @@ export class AutomationManager {
         status: "queued",
         taskId: undefined,
         errorJson: undefined,
-        outputPath: undefined
+        outputPath: undefined,
+        startedAt: undefined,
+        finishedAt: undefined
       });
+    }
+  }
+
+  private throwIfCancelled(signal: AbortSignal): void {
+    if (signal.aborted) {
+      throw new CCAgentError(ErrorCodes.Cancelled, "Automation run was cancelled");
     }
   }
 
@@ -920,6 +967,7 @@ function formatRoleTeam(roles: ReviewRole[]): string {
   }
   return roles.map((role, index) => [
     `${index + 1}. ${role.name}`,
+    `Role ID: ${role.id}`,
     `Group: ${role.group}`,
     `Description: ${role.description}`,
     "Focus areas:",
@@ -928,28 +976,29 @@ function formatRoleTeam(roles: ReviewRole[]): string {
 }
 
 function formatProviderPacketContent(content: string, roles: ReviewRole[]): string {
+  const trimmed = content.trim();
   if (roles.length === 0) {
-    return content;
-  }
-  const sections = roles.map((role) => {
-    const extracted = extractRoleSection(content, role.name);
     return [
-      `### Role: ${role.name}`,
+      "### Raw Provider Output",
       "",
-      extracted || "Provider did not return a clearly separated section for this role."
+      trimmed || "(empty provider output)"
     ].join("\n");
-  });
-  return sections.join("\n\n");
-}
-
-function extractRoleSection(content: string, roleName: string): string {
-  const escaped = escapeRegExp(roleName);
-  const match = content.match(new RegExp(`^##\\s+Role:\\s*${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+Role:|$)`, "im"));
-  return match?.[1]?.trim() ?? "";
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return [
+    "### Assigned Role Team",
+    "",
+    ...roles.flatMap((role, index) => [
+      `${index + 1}. ${role.name}`,
+      `Role ID: ${role.id}`,
+      `Group: ${role.group}`,
+      `Description: ${role.description}`,
+      `Focus areas: ${role.focusAreas.join(", ") || "none"}`,
+      ""
+    ]),
+    "### Raw Provider Output",
+    "",
+    trimmed || "(empty provider output)"
+  ].join("\n");
 }
 
 function captureTargetDocumentDiff(cwd: string, targetFile: string, before: string | undefined): string {
@@ -977,7 +1026,7 @@ interface IterationStopDecision {
   nextFocus?: string[];
   riskFlags?: string[];
   reason: string;
-  source: "structured" | "summary-text" | "diff" | "max-iterations";
+  source: "structured" | "diff" | "max-iterations";
 }
 
 function decideIterationContinuation(input: {
@@ -1020,18 +1069,6 @@ function decideIterationContinuation(input: {
           : "Codex requested another iteration, but the target document diff is empty, so the run stopped."
         : structured.reason || "Codex reported no actionable findings for another iteration.",
       source: "structured"
-    };
-  }
-
-  const summarySaysStop = summarySaysNoActionableChanges(input.summary);
-  if (summarySaysStop) {
-    return {
-      shouldContinue: false,
-      changesDetected,
-      continueRequested: false,
-      confidence: "medium",
-      reason: "Codex summary indicates there are no remaining actionable changes.",
-      source: "summary-text"
     };
   }
 
@@ -1102,22 +1139,6 @@ function parseDecisionList(summary: string, label: string): string[] | undefined
     }
   }
   return items.length > 0 ? items : undefined;
-}
-
-function summarySaysNoActionableChanges(summary: string): boolean {
-  const normalized = summary.toLowerCase();
-  return [
-    "no actionable",
-    "nothing actionable",
-    "no remaining actionable",
-    "no further changes",
-    "no more changes",
-    "无需修改",
-    "没有可修改",
-    "没有需要修改",
-    "无可执行",
-    "无可采纳"
-  ].some((phrase) => normalized.includes(phrase));
 }
 
 function unifiedLineDiff(before: string, after: string, contextLines = 3): string[] {
@@ -1256,6 +1277,9 @@ function formatDiffChunk(operations: DiffOperation[]): string[] {
 }
 
 async function defaultRunCodex(codexPath: string, input: CodexRunInput): Promise<CodexRunOutput> {
+  if (input.signal?.aborted) {
+    throw new CCAgentError(ErrorCodes.Cancelled, "Codex task was cancelled");
+  }
   const child = spawnCli(codexPath, [
     "exec",
     "--dangerously-bypass-approvals-and-sandbox",
@@ -1278,14 +1302,13 @@ async function defaultRunCodex(codexPath: string, input: CodexRunInput): Promise
     input.onStderr(text);
   });
   return await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        writeDiagnostic(input.stderrPath, `\n[ccagent] Codex task timed out after ${input.timeoutMs} ms\n`);
-        child.kill();
-        reject(new CCAgentError(ErrorCodes.Timeout, "Codex task timed out"));
-      }, input.timeoutMs);
       input.signal?.addEventListener("abort", () => {
         writeDiagnostic(input.stderrPath, "\n[ccagent] Codex task was cancelled\n");
-        child.kill();
+        if (child.pid) {
+          void terminateProcessTree(child.pid);
+        } else {
+          child.kill();
+        }
         reject(new CCAgentError(ErrorCodes.Cancelled, "Codex task was cancelled"));
       }, { once: true });
       child.once("error", (error) => {
@@ -1293,7 +1316,6 @@ async function defaultRunCodex(codexPath: string, input: CodexRunInput): Promise
         reject(error);
       });
       child.once("exit", (code) => {
-        clearTimeout(timeout);
         resolve({ content: stdout, exitCode: code ?? 0 });
     });
   });

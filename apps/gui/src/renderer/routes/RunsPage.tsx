@@ -1,6 +1,7 @@
 import type { AutomationRunRecord } from "@ccagent/core";
 import type { Translator } from "../i18n.js";
 import type { RunDecisionDetails } from "../guiLogic.js";
+import { useEffect, useState } from "react";
 
 export interface RunsPageProps {
   t: Translator;
@@ -9,6 +10,7 @@ export interface RunsPageProps {
   selectedOutputRunId?: string;
   selectedStatus?: RunDecisionDetails;
   selectedStatusRunId?: string;
+  nowMs?: number;
   onCancel(runId: string): void | Promise<void>;
   onShowStatus(run: AutomationRunRecord): void | Promise<void>;
   onSelectStatusIteration(runId: string, iteration: number | undefined): void;
@@ -23,12 +25,22 @@ export function RunsPage({
   selectedOutputRunId,
   selectedStatus,
   selectedStatusRunId,
+  nowMs,
   onCancel,
   onShowStatus,
   onSelectStatusIteration,
   onReadOutput,
   onDelete
 }: RunsPageProps) {
+  const [clockMs, setClockMs] = useState(() => nowMs ?? Date.now());
+  useEffect(() => {
+    if (nowMs !== undefined) {
+      setClockMs(nowMs);
+      return undefined;
+    }
+    const timer = window.setInterval(() => setClockMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [nowMs]);
   return (
     <section className="page-section" id="runs">
       <header>
@@ -44,7 +56,9 @@ export function RunsPage({
             <th>{t("iterations")}</th>
             <th>{t("started")}</th>
             <th>{t("phase")}</th>
-            <th>{t("cancel")}</th>
+            <th>{t("cli")}</th>
+            <th>{t("elapsed")}</th>
+            <th>{t("terminateCli")}</th>
             <th>{t("status")}</th>
             <th>{t("output")}</th>
             <th>{t("delete")}</th>
@@ -60,8 +74,12 @@ export function RunsPage({
               <td>{iterationSummary(run)}</td>
               <td>{run.createdAt}</td>
               <td>{phaseLabel(run, t)}</td>
+              <td>{cliStatus(run, t)}</td>
+              <td>{elapsedLabel(run, clockMs)}</td>
               <td>
-                <button type="button" onClick={() => void onCancel(run.id)}>{t("cancel")}</button>
+                <button type="button" disabled={!isRunActive(run)} onClick={() => void onCancel(run.id)}>
+                  {isRunActive(run) ? t("terminateCli") : t("cancel")}
+                </button>
               </td>
               <td>
                 <button type="button" onClick={() => onShowStatus(run)}>{t("status")}</button>
@@ -165,6 +183,49 @@ function phaseLabel(run: AutomationRunRecord, t: Translator): string {
     return t("phaseCancelled");
   }
   return run.status;
+}
+
+function isRunActive(run: AutomationRunRecord): boolean {
+  return ["queued", "reviewing", "merging", "codex_editing", "verifying"].includes(run.status);
+}
+
+function cliStatus(run: AutomationRunRecord, t: Translator): string {
+  const providerStatus = run.providers
+    .map((provider) => `${provider.provider}:${provider.status}`)
+    .join(", ");
+  if (run.status === "reviewing" && providerStatus) {
+    return `${t("claudeCli")}: ${providerStatus}`;
+  }
+  if (run.codexTask) {
+    return `${t("codexCli")}: ${run.codexTask.status} (${run.codexTask.taskId})`;
+  }
+  if (providerStatus) {
+    return `${t("claudeCli")}: ${providerStatus}`;
+  }
+  return "";
+}
+
+function elapsedLabel(run: AutomationRunRecord, nowMs = Date.now()): string {
+  const startedAt = activeStartedAt(run);
+  if (!startedAt) {
+    return "";
+  }
+  const elapsedMs = Math.max(0, nowMs - Date.parse(startedAt));
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function activeStartedAt(run: AutomationRunRecord): string | undefined {
+  const runningProvider = run.providers.find((provider) => provider.status === "running");
+  if (runningProvider) {
+    return runningProvider.startedAt ?? run.iterations.at(-1)?.startedAt ?? run.createdAt;
+  }
+  if (run.codexTask?.status === "running") {
+    return run.codexTask.startedAt;
+  }
+  return undefined;
 }
 
 function iterationSummary(run: AutomationRunRecord): string {

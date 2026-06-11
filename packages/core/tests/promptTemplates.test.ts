@@ -75,6 +75,8 @@ describe("prompt templates", () => {
     expect(codexTemplate?.content).toContain("adjudicate the provider review findings");
     expect(codexTemplate?.content).toContain("Do not replace the target document with a different file");
     expect(codexTemplate?.content).toContain("You may inspect surrounding repository context");
+    expect(codexTemplate?.content).toContain("CCAgent preserves provider outputs mostly as raw text");
+    expect(codexTemplate?.content).toContain("Infer role perspectives");
     expect(zhClaudeTemplate).toMatchObject({
       kind: "claude-review",
       name: "完整 Claude 评审",
@@ -131,6 +133,8 @@ describe("prompt templates", () => {
     expect(claudeTemplate?.requiredVariables).toContain("roleTeam");
     expect(claudeTemplate?.content).toContain("{roleTeam}");
     expect(claudeTemplate?.content).toContain("Role team");
+    expect(claudeTemplate?.content).toContain("Use the selected role team as review perspectives");
+    expect(claudeTemplate?.content).not.toContain("headings exactly like");
     expect(zhClaudeTemplate?.requiredVariables).toContain("roleTeam");
     expect(zhClaudeTemplate?.content).toContain("{roleTeam}");
     expect(zhClaudeTemplate?.content).toContain("角色小组");

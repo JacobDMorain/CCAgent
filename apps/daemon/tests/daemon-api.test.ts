@@ -1099,6 +1099,30 @@ describe("daemon API", () => {
       updatedAt: "2026-06-08T10:00:00.000Z"
     });
     await client.post("/prompt-templates", {
+      id: "default-claude-review-full-zh",
+      kind: "claude-review",
+      name: "Old Chinese Claude Review",
+      description: "Old Chinese default Claude review template",
+      version: 1,
+      content: "旧中文模板 {provider} {file} {workspaceRoot} {reviewStyle} {language}",
+      requiredVariables: ["provider", "file", "workspaceRoot", "reviewStyle", "language"],
+      isDefault: true,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+    await client.post("/prompt-templates", {
+      id: "default-codex-edit-zh",
+      kind: "codex-edit",
+      name: "Old Chinese Codex Edit",
+      description: "Old Chinese default Codex edit template",
+      version: 1,
+      content: "旧中文 Codex 模板 {runId} {targetDocument} {workspaceRoot} {reviewPacket} {failedProviders}",
+      requiredVariables: ["runId", "targetDocument", "workspaceRoot", "reviewPacket", "failedProviders"],
+      isDefault: true,
+      createdAt: "2026-06-08T10:00:00.000Z",
+      updatedAt: "2026-06-08T10:00:00.000Z"
+    });
+    await client.post("/prompt-templates", {
       id: "custom-codex",
       kind: "codex-edit",
       name: "Custom Codex",
@@ -1121,6 +1145,15 @@ describe("daemon API", () => {
     expect(templates.find((template) => template.id === "default-codex-edit")).toMatchObject({
       version: 2,
       content: expect.stringContaining("adjudicate the provider review findings")
+    });
+    expect(templates.find((template) => template.id === "default-claude-review-full-zh")).toMatchObject({
+      version: 2,
+      content: expect.stringContaining("{roleTeam}"),
+      requiredVariables: expect.arrayContaining(["roleTeam"])
+    });
+    expect(templates.find((template) => template.id === "default-codex-edit-zh")).toMatchObject({
+      version: 2,
+      content: expect.stringContaining("Review packet 是审计材料包")
     });
     expect(templates.find((template) => template.id === "custom-codex")).toMatchObject({
       content: "Custom template {reviewPacket}"
@@ -1207,7 +1240,7 @@ describe("daemon API", () => {
     });
   });
 
-  test("automation run injects selected review roles into one provider task and review packet", async () => {
+  test("automation run records selected review roles and raw provider output in review packet", async () => {
     const providerPrompts: string[] = [];
     const codexPrompts: string[] = [];
     const root = join(tmpdir(), `ccagent-role-run-${Date.now()}-${Math.random()}`);
@@ -1299,12 +1332,116 @@ describe("daemon API", () => {
     expect(providerPrompts[0]).toContain("Role team");
     expect(providerPrompts[0]).toContain("文档结构审查员");
     expect(providerPrompts[0]).toContain("事实一致性审查员");
-    expect(providerPrompts[0]).toContain("Provider outputs must be grouped by role");
+    expect(providerPrompts[0]).toContain("Use the selected role team as review perspectives");
     expect(inputJson.reviewers[0].roleIds).toEqual(["document-structure", "fact-consistency"]);
     expect(rolesJson.selectedRoles.map((role: any) => role.id)).toEqual(["document-structure", "fact-consistency"]);
-    expect(output.content).toContain("### Role: 文档结构审查员");
-    expect(output.content).toContain("### Role: 事实一致性审查员");
-    expect(codexPrompts[0]).toContain("role grouped");
+    expect(output.content).toContain("### Assigned Role Team");
+    expect(output.content).toContain("Role ID: document-structure");
+    expect(output.content).toContain("Role ID: fact-consistency");
+    expect(output.content).toContain("### Raw Provider Output");
+    expect(output.content).toContain("## Role: 文档结构审查员");
+    expect(output.content).toContain("## Role: 事实一致性审查员");
+    expect(output.content).not.toContain("Provider did not return");
+    expect(codexPrompts[0]).toContain("raw text");
+  });
+
+  test("automation run preserves unstructured raw provider output without role parsing fallback text", async () => {
+    const root = join(tmpdir(), `ccagent-role-unstructured-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "handoff.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+    const providerReview = [
+      "Critical: the completion log is missing milestone evidence.",
+      "",
+      "Suggested change: add the missing evidence rows before handoff."
+    ].join("\n");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: providerReview, raw: "{}" }),
+          allocatePort: async () => ({ port: 41032, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async (input) => {
+            if (input.prompt.includes("Codex edit output")) {
+              return {
+                exitCode: 0,
+                content: [
+                  "## Applied",
+                  "- None",
+                  "",
+                  "## Rejected",
+                  "- None",
+                  "",
+                  "## Deferred",
+                  "- None",
+                  "",
+                  "## User-Facing Summary",
+                  "No changes.",
+                  "",
+                  "## Continue Decision",
+                  "continue: no",
+                  "reason: no actionable changes",
+                  "confidence: high",
+                  "next_focus:",
+                  "- none",
+                  "risk_flags:",
+                  "- none"
+                ].join("\n")
+              };
+            }
+            return { exitCode: 0, content: "Codex reviewed unstructured provider output." };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+      const role = {
+        id: "evidence-reviewer",
+        group: "documentation",
+        name: "Evidence Reviewer",
+        description: "Checks whether handoff evidence is complete.",
+        focusAreas: ["completion evidence"],
+        defaultSelected: true,
+        source: "global",
+        createdAt: "2026-06-11T10:00:00.000Z",
+        updatedAt: "2026-06-11T10:00:00.000Z"
+      };
+      await client.post("/review-roles", role);
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm", roleIds: [role.id] }],
+        roles: [role],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 1
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+      const completed = (await client.get(`/automation-runs/${run.id}`)) as any;
+      const packet = readFileSync(completed.iterations[0].reviewPacketPath, "utf8");
+
+      expect(packet).toContain("### Assigned Role Team");
+      expect(packet).toContain("Role ID: evidence-reviewer");
+      expect(packet).toContain("### Raw Provider Output");
+      expect(packet).toContain(providerReview);
+      expect(packet).not.toContain("Provider did not return");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("automation run uses Codex-written decision summary file when stdout is only a confirmation", async () => {
@@ -1481,6 +1618,138 @@ describe("daemon API", () => {
         await daemon.stop();
         daemons.splice(daemons.indexOf(daemon), 1);
       }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run does not auto-fail a long Codex edit when timeoutMs is short", async () => {
+    const root = join(tmpdir(), `ccagent-codex-no-timeout-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let resolveCodex: ((output: { exitCode: number; content: string }) => void) | undefined;
+    let codexCalls = 0;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+
+    try {
+      let resolveCodexStarted: (() => void) | undefined;
+      const codexStarted = new Promise<void>((resolve) => {
+        resolveCodexStarted = resolve;
+      });
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41033, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalls += 1;
+            if (codexCalls > 1) {
+              return {
+                exitCode: 0,
+                content: "## Continue Decision\ncontinue: no\nreason: decision summary completed"
+              };
+            }
+            resolveCodexStarted?.();
+            return await new Promise((resolveRunCodex) => {
+              resolveCodex = resolveRunCodex;
+            });
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        timeoutMs: 1000,
+        maxIterations: 1
+      })) as any;
+
+      await codexStarted;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const running = (await client.get(`/automation-runs/${run.id}`)) as any;
+      expect(running.status).toBe("codex_editing");
+      expect(running.codexTask).toMatchObject({ status: "running" });
+
+      resolveCodex?.({
+        exitCode: 0,
+        content: "## Continue Decision\ncontinue: no\nreason: completed after short timeout"
+      });
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run cancel aborts a running Codex edit", async () => {
+    const root = join(tmpdir(), `ccagent-codex-cancel-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let codexSignal: AbortSignal | undefined;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+
+    try {
+      let resolveCodexStarted: (() => void) | undefined;
+      const codexStarted = new Promise<void>((resolve) => {
+        resolveCodexStarted = resolve;
+      });
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async () => ({ content: "provider review output", raw: "{}" }),
+          allocatePort: async () => ({ port: 41034, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async (input) => {
+            codexSignal = input.signal;
+            resolveCodexStarted?.();
+            await new Promise((_resolve, reject) => {
+              input.signal?.addEventListener("abort", () => reject(new CCAgentError(ErrorCodes.Cancelled, "Codex task was cancelled")), { once: true });
+            });
+            return { exitCode: 0, content: "unreachable" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit"
+      })) as any;
+
+      await codexStarted;
+      expect(codexSignal?.aborted).toBe(false);
+      await client.post(`/automation-runs/${run.id}/cancel`);
+      expect(codexSignal?.aborted).toBe(true);
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "cancelled");
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1955,6 +2224,169 @@ describe("daemon API", () => {
       expect(finalReport).toContain("第 1 轮");
       expect(finalReport).not.toContain("# CCAgent Automation Final Report");
       expect(finalReport).not.toContain("Reached maximum iteration count");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run cancel aborts running provider review before Codex starts", async () => {
+    const root = join(tmpdir(), `ccagent-provider-cancel-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "test.md");
+    let claudeSignal: AbortSignal | undefined;
+    let codexCalled = false;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+
+    try {
+      let resolveProviderStarted: (() => void) | undefined;
+      const providerStarted = new Promise<void>((resolve) => {
+        resolveProviderStarted = resolve;
+      });
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async (input) => {
+            claudeSignal = input.signal;
+            resolveProviderStarted?.();
+            return await new Promise((resolve, reject) => {
+              input.signal?.addEventListener("abort", () => {
+                reject(new CCAgentError(ErrorCodes.Cancelled, "provider cancelled"));
+              }, { once: true });
+            });
+          },
+          allocatePort: async () => ({ port: 41035, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async () => {
+            codexCalled = true;
+            return { exitCode: 0, content: "unexpected" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm" }],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 1
+      })) as any;
+
+      await providerStarted;
+      const running = (await client.get(`/automation-runs/${run.id}`)) as any;
+      expect(running.providers[0].taskId).toMatch(/^task_/);
+      expect(running.providers[0].status).toBe("running");
+
+      await client.post(`/automation-runs/${run.id}/cancel`);
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "cancelled");
+
+      expect(claudeSignal?.aborted).toBe(true);
+      expect(codexCalled).toBe(false);
+      const cancelled = (await client.get(`/automation-runs/${run.id}`)) as any;
+      expect(cancelled.providers[0].status).toBe("cancelled");
+      expect(cancelled.iterations[0]).toMatchObject({
+        status: "stopped",
+        stopReason: "Cancelled by user."
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("automation run injects selected role team into provider review prompt", async () => {
+    let providerPrompt = "";
+    const root = join(tmpdir(), `ccagent-role-team-prompt-${Date.now()}-${Math.random()}`);
+    const targetPath = join(root, "handoff.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(targetPath, "# Target\n", "utf8");
+
+    try {
+      const daemon = await startDaemon({
+        port: 0,
+        settings: { workspace: { allowedRoots: [root] } },
+        orchestration: {
+          checkClaudeBinary: fakeCheckClaudeBinary,
+          runClaude: async (input) => {
+            providerPrompt = input.prompt;
+            return { content: "provider review output", raw: "{}" };
+          },
+          allocatePort: async () => ({ port: 41019, release: async () => undefined }),
+          startProxy: async (config) => ({
+            taskId: config.taskId,
+            baseUrl: `http://127.0.0.1:${config.port}`,
+            stop: async () => undefined
+          })
+        },
+        automationOrchestration: {
+          runCodex: async (input) => {
+            if (input.prompt.includes("Codex edit output")) {
+              return {
+                exitCode: 0,
+                content: [
+                  "## Applied",
+                  "- None.",
+                  "",
+                  "## Continue Decision",
+                  "continue: no",
+                  "reason: no actionable changes remain",
+                  "confidence: high",
+                  "next_focus:",
+                  "- none",
+                  "risk_flags:",
+                  "- none"
+                ].join("\n")
+              };
+            }
+            return { exitCode: 0, content: "Codex made no changes" };
+          }
+        }
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ baseUrl: daemon.baseUrl, token: daemon.authToken });
+      await client.post("/providers", createBuiltInProviders().glm);
+      await client.post("/providers/glm/secret", { value: "sk-provider" });
+
+      const role = {
+        id: "document-structure",
+        group: "documentation-quality",
+        name: "Document Structure Reviewer",
+        description: "Checks section structure and reader path.",
+        focusAreas: ["section structure", "reader path"],
+        defaultSelected: true,
+        source: "generated",
+        createdAt: "2026-06-11T10:00:00.000Z",
+        updatedAt: "2026-06-11T10:00:00.000Z"
+      };
+      const run = (await client.post("/automation-runs", {
+        cwd: root,
+        file: targetPath,
+        reviewers: [{ provider: "glm", roleIds: ["document-structure"] }],
+        roles: [role],
+        claudeTemplateId: "default-claude-review-full",
+        codexTemplateId: "default-codex-edit",
+        maxIterations: 1
+      })) as any;
+
+      await waitFor(async () => ((await client.get(`/automation-runs/${run.id}`)) as any).status === "done");
+
+      expect(providerPrompt).toContain("Role team:");
+      expect(providerPrompt).toContain("Document Structure Reviewer");
+      expect(providerPrompt).toContain("Role ID: document-structure");
+      expect(providerPrompt).toContain("Focus areas:");
+      expect(providerPrompt).toContain("- section structure");
+      expect(providerPrompt).toContain("- reader path");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

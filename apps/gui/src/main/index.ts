@@ -9,6 +9,7 @@ let mainWindow: BrowserWindow | undefined;
 let handlers: GuiApiHandlers | undefined;
 let daemonStartup: Promise<void> | undefined;
 let daemonStartupError: Error | undefined;
+let ownsDaemon = false;
 
 export async function startGui(): Promise<void> {
   registerIpcHandlers(createPendingGuiApiHandlers());
@@ -34,14 +35,17 @@ export async function startGui(): Promise<void> {
 }
 
 async function initializeDaemon(): Promise<void> {
+  daemonStartupError = undefined;
   const daemonOverride = getDaemonOverride();
   if (daemonOverride) {
+    ownsDaemon = false;
     handlers = createGuiApiHandlers(new DaemonClient(daemonOverride));
     return;
   }
 
   const existingClient = await connectExistingDaemon();
   if (existingClient) {
+    ownsDaemon = false;
     handlers = createGuiApiHandlers(existingClient);
     return;
   }
@@ -51,6 +55,7 @@ async function initializeDaemon(): Promise<void> {
     baseUrl: daemon.baseUrl,
     token: daemon.authToken
   });
+  ownsDaemon = true;
   handlers = createGuiApiHandlers(client);
 }
 
@@ -91,36 +96,51 @@ function createPendingGuiApiHandlers(): GuiApiHandlers {
     error.name = daemonStartupError ? "DAEMON_UNAVAILABLE" : "DAEMON_STARTING";
     throw error;
   };
+  const call = async <T>(operation: (api: GuiApiHandlers) => Promise<T>): Promise<T> => {
+    try {
+      return await operation(await getHandlers());
+    } catch (error) {
+      if (!shouldReinitializeDaemon(error)) {
+        throw error;
+      }
+      handlers = undefined;
+      daemonStartup = initializeDaemon().catch((startupError: unknown) => {
+        daemonStartupError = toError(startupError);
+        console.error(daemonStartupError);
+      });
+      return operation(await getHandlers());
+    }
+  };
 
   return {
-    listProviders: async () => (await getHandlers()).listProviders(),
-    listReviewRoles: async () => (await getHandlers()).listReviewRoles(),
-    saveReviewRole: async (role) => (await getHandlers()).saveReviewRole(role),
-    deleteReviewRole: async (roleId) => (await getHandlers()).deleteReviewRole(roleId),
-    generateReviewRoles: async (request) => (await getHandlers()).generateReviewRoles(request),
-    promoteReviewRole: async (role) => (await getHandlers()).promoteReviewRole(role),
-    saveProvider: async (provider, apiKey) => (await getHandlers()).saveProvider(provider, apiKey),
-    deleteProvider: async (providerId) => (await getHandlers()).deleteProvider(providerId),
-    testProvider: async (provider, model) => (await getHandlers()).testProvider(provider, model),
-    listTasks: async () => (await getHandlers()).listTasks(),
-    clearTasks: async () => (await getHandlers()).clearTasks(),
-    cancelTask: async (taskId) => (await getHandlers()).cancelTask(taskId),
-    readTaskOutput: async (taskId) => (await getHandlers()).readTaskOutput(taskId),
-    createAutomationRun: async (request) => (await getHandlers()).createAutomationRun(request),
-    listAutomationRuns: async () => (await getHandlers()).listAutomationRuns(),
-    getAutomationRun: async (runId) => (await getHandlers()).getAutomationRun(runId),
-    readAutomationRunOutput: async (runId) => (await getHandlers()).readAutomationRunOutput(runId),
-    deleteAutomationRun: async (runId) => (await getHandlers()).deleteAutomationRun(runId),
-    cancelAutomationRun: async (runId) => (await getHandlers()).cancelAutomationRun(runId),
-    retryAutomationRun: async (runId) => (await getHandlers()).retryAutomationRun(runId),
-    rerunCodexEdit: async (runId) => (await getHandlers()).rerunCodexEdit(runId),
-    listPromptTemplates: async () => (await getHandlers()).listPromptTemplates(),
-    savePromptTemplate: async (template) => (await getHandlers()).savePromptTemplate(template),
-    deletePromptTemplate: async (templateId) => (await getHandlers()).deletePromptTemplate(templateId),
-    getRuntimeSettings: async () => (await getHandlers()).getRuntimeSettings(),
-    saveRuntimeSettings: async (settings) => (await getHandlers()).saveRuntimeSettings(settings),
-    testCodex: async () => (await getHandlers()).testCodex(),
-    setWorkspaceRoots: async (allowedRoots) => (await getHandlers()).setWorkspaceRoots(allowedRoots)
+    listProviders: async () => call((api) => api.listProviders()),
+    listReviewRoles: async () => call((api) => api.listReviewRoles()),
+    saveReviewRole: async (role) => call((api) => api.saveReviewRole(role)),
+    deleteReviewRole: async (roleId) => call((api) => api.deleteReviewRole(roleId)),
+    generateReviewRoles: async (request) => call((api) => api.generateReviewRoles(request)),
+    promoteReviewRole: async (role) => call((api) => api.promoteReviewRole(role)),
+    saveProvider: async (provider, apiKey) => call((api) => api.saveProvider(provider, apiKey)),
+    deleteProvider: async (providerId) => call((api) => api.deleteProvider(providerId)),
+    testProvider: async (provider, model) => call((api) => api.testProvider(provider, model)),
+    listTasks: async () => call((api) => api.listTasks()),
+    clearTasks: async () => call((api) => api.clearTasks()),
+    cancelTask: async (taskId) => call((api) => api.cancelTask(taskId)),
+    readTaskOutput: async (taskId) => call((api) => api.readTaskOutput(taskId)),
+    createAutomationRun: async (request) => call((api) => api.createAutomationRun(request)),
+    listAutomationRuns: async () => call((api) => api.listAutomationRuns()),
+    getAutomationRun: async (runId) => call((api) => api.getAutomationRun(runId)),
+    readAutomationRunOutput: async (runId) => call((api) => api.readAutomationRunOutput(runId)),
+    deleteAutomationRun: async (runId) => call((api) => api.deleteAutomationRun(runId)),
+    cancelAutomationRun: async (runId) => call((api) => api.cancelAutomationRun(runId)),
+    retryAutomationRun: async (runId) => call((api) => api.retryAutomationRun(runId)),
+    rerunCodexEdit: async (runId) => call((api) => api.rerunCodexEdit(runId)),
+    listPromptTemplates: async () => call((api) => api.listPromptTemplates()),
+    savePromptTemplate: async (template) => call((api) => api.savePromptTemplate(template)),
+    deletePromptTemplate: async (templateId) => call((api) => api.deletePromptTemplate(templateId)),
+    getRuntimeSettings: async () => call((api) => api.getRuntimeSettings()),
+    saveRuntimeSettings: async (settings) => call((api) => api.saveRuntimeSettings(settings)),
+    testCodex: async () => call((api) => api.testCodex()),
+    setWorkspaceRoots: async (allowedRoots) => call((api) => api.setWorkspaceRoots(allowedRoots))
   };
 }
 
@@ -130,6 +150,10 @@ function toError(error: unknown): Error {
 
 function isAddressInUseError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+}
+
+function shouldReinitializeDaemon(error: unknown): boolean {
+  return ownsDaemon && error instanceof Error && "code" in error && error.code === "CCAGENT_DAEMON_UNAVAILABLE";
 }
 
 function getDaemonOverride(): { baseUrl: string; token: string } | undefined {
