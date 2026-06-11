@@ -1004,11 +1004,10 @@ describe("daemon API", () => {
               roles: [
                 {
                   id: "algorithm-consistency",
+                  group: "core-technology",
                   name: "算法一致性审查员",
                   description: "检查算法描述和实现上下文是否一致。",
-                  prompt: "你负责检查算法一致性。",
                   focusAreas: ["公式", "伪代码"],
-                  outputInstructions: "按 ## Role 分段输出。",
                   defaultSelected: true
                 }
               ]
@@ -1031,11 +1030,10 @@ describe("daemon API", () => {
 
     const customRole = {
       id: "handoff-owner",
+      group: "product-delivery",
       name: "交接负责人",
       description: "检查交接完整性。",
-      prompt: "你负责检查交接完整性。",
       focusAreas: ["交接边界"],
-      outputInstructions: "列出缺口。",
       defaultSelected: false,
       source: "global",
       createdAt: "2026-06-10T10:00:00.000Z",
@@ -1055,10 +1053,16 @@ describe("daemon API", () => {
       language: "中文"
     })) as any;
     expect(codexPrompts[0]).toContain("Generate review roles");
+    expect(codexPrompts[0]).toContain("department manager");
+    expect(codexPrompts[0]).toContain("HR");
+    expect(codexPrompts[0]).toContain('"group"');
+    expect(codexPrompts[0]).not.toContain('"prompt"');
+    expect(codexPrompts[0]).not.toContain('"outputInstructions"');
     expect(codexPrompts[0]).toContain(targetPath);
     expect(generated.roles).toEqual([
       expect.objectContaining({
         id: "algorithm-consistency",
+        group: "core-technology",
         source: "generated",
         defaultSelected: true
       })

@@ -780,6 +780,7 @@ async function generateReviewRoles(
     roles: parsed.map((role) =>
       ReviewRoleSchema.parse({
         ...role,
+        group: role.group ?? "custom",
         source: "generated",
         createdAt: role.createdAt ?? now,
         updatedAt: role.updatedAt ?? now
@@ -791,6 +792,8 @@ async function generateReviewRoles(
 function buildGenerateReviewRolesPrompt(input: { cwd: string; file: string; requestedFile?: string; language?: string }): string {
   return [
     "Generate review roles for a CCAgent role-based group review workflow.",
+    "Think like a department manager building a superstar expert team from zero.",
+    "Recruit the expert positions an HR partner would need for this document to become correct, usable, productizable, and maintainable.",
     "",
     `Workspace root: ${input.cwd}`,
     `Target document: ${input.file}`,
@@ -798,17 +801,18 @@ function buildGenerateReviewRolesPrompt(input: { cwd: string; file: string; requ
     `Language: ${input.language ?? "Chinese"}`,
     "",
     "Read the target document and inspect surrounding workspace context when useful.",
+    "Cover multiple functions when relevant: core technology, product delivery, user perspective, risk/opposition, business/operations, and custom domain specialists.",
     "Do not modify any file and do not start review.",
+    'Use group values from: "core-technology", "documentation-quality", "product-delivery", "user-perspective", "risk-opposition", "business-operations", "custom".',
     "Return JSON only with this shape:",
     "{",
     '  "roles": [',
     "    {",
     '      "id": "stable-kebab-id",',
+    '      "group": "core-technology",',
     '      "name": "角色名称",',
-    '      "description": "why this role matters",',
-    '      "prompt": "role responsibility and boundary",',
+    '      "description": "why this expert position matters",',
     '      "focusAreas": ["area"],',
-    '      "outputInstructions": "role-specific output format",',
     '      "defaultSelected": true',
     "    }",
     "  ]",

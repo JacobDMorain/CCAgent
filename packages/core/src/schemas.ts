@@ -85,18 +85,34 @@ export const PromptTemplateSchema = z.object({
   updatedAt: z.string().min(1)
 });
 
-export const ReviewRoleSchema = z.object({
+const legacyRoleGroupById: Record<string, string> = {
+  "document-structure": "documentation-quality",
+  "fact-consistency": "documentation-quality",
+  actionability: "product-delivery",
+  "risk-opposition": "risk-opposition",
+  "language-expression": "user-perspective"
+};
+
+export const ReviewRoleSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value) || "group" in value) {
+    return value;
+  }
+  const id = (value as { id?: unknown }).id;
+  return {
+    ...value,
+    group: typeof id === "string" ? legacyRoleGroupById[id] ?? "custom" : "custom"
+  };
+}, z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+  group: z.string().min(1),
   name: z.string().min(1),
   description: z.string().min(1),
-  prompt: z.string().min(1),
   focusAreas: z.array(z.string().min(1)),
-  outputInstructions: z.string().min(1),
   defaultSelected: z.boolean(),
   source: z.enum(["global", "generated"]),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1)
-});
+}));
 
 export const AutomationRunRequestSchema = z.object({
   cwd: z.string().min(1),

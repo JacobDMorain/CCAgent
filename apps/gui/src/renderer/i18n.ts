@@ -22,9 +22,8 @@ export const translations = {
     promoteRole: "Promote",
     newRole: "New role",
     roleEditor: "Role editor",
-    rolePrompt: "Role prompt",
+    roleGroup: "Group",
     focusAreas: "Focus areas",
-    outputInstructions: "Output instructions",
     defaultSelected: "Default selected",
     workspaceRoot: "Workspace root",
     targetFile: "Target file",
@@ -147,6 +146,7 @@ export const translations = {
     codexCliOk: "Codex CLI ok: {value}"
   },
   zh: {
+    roleGroup: "职能分组",
     navReviewWorkspace: "评审工作区",
     navReviewRoles: "评审角色",
     navProviders: "服务商",
@@ -167,9 +167,7 @@ export const translations = {
     promoteRole: "提升为全局角色",
     newRole: "新增角色",
     roleEditor: "角色编辑器",
-    rolePrompt: "角色提示词",
     focusAreas: "关注点",
-    outputInstructions: "输出要求",
     defaultSelected: "默认勾选",
     workspaceRoot: "工作区根目录",
     targetFile: "目标文件",

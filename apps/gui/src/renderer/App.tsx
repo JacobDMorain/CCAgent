@@ -168,6 +168,7 @@ export function App({
           }}
         />
         <ReviewRolesPage
+          locale={locale}
           t={t}
           roles={reviewRoles}
           onSave={async (role) => {

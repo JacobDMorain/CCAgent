@@ -12,6 +12,7 @@ describe("SqliteReviewRoleStore", () => {
 
     expect(store.getRole("document-structure")).toMatchObject({
       id: "document-structure",
+      group: "documentation-quality",
       name: "文档结构审查员",
       source: "global",
       defaultSelected: true

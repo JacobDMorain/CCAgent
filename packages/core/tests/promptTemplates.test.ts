@@ -107,8 +107,20 @@ describe("prompt templates", () => {
       "可执行性审查员"
     ]);
     expect(roles.every((role) => role.source === "global")).toBe(true);
-    expect(roles[0].prompt).toContain("章节结构");
-    expect(roles[0].outputInstructions).toContain("## Role:");
+    expect(roles.map((role) => role.group)).toEqual([
+      "documentation-quality",
+      "documentation-quality",
+      "product-delivery",
+      "risk-opposition",
+      "user-perspective"
+    ]);
+    expect(roles[0]).toMatchObject({
+      id: "document-structure",
+      description: expect.stringContaining("章节结构"),
+      focusAreas: expect.arrayContaining(["章节结构"])
+    });
+    expect("prompt" in roles[0]).toBe(false);
+    expect("outputInstructions" in roles[0]).toBe(false);
   });
 
   test("default Claude review templates expose roleTeam variable", () => {

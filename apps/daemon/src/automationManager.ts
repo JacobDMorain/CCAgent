@@ -920,13 +920,10 @@ function formatRoleTeam(roles: ReviewRole[]): string {
   }
   return roles.map((role, index) => [
     `${index + 1}. ${role.name}`,
+    `Group: ${role.group}`,
     `Description: ${role.description}`,
     "Focus areas:",
-    ...role.focusAreas.map((area) => `- ${area}`),
-    "Role prompt:",
-    role.prompt,
-    "Output instructions:",
-    role.outputInstructions
+    ...role.focusAreas.map((area) => `- ${area}`)
   ].join("\n")).join("\n\n");
 }
 

@@ -227,11 +227,10 @@ const providerFixture: ProviderConfig = {
 
 const roleFixture: ReviewRole = {
   id: "document-structure",
+  group: "documentation-quality",
   name: "文档结构审查员",
   description: "检查章节结构。",
-  prompt: "你负责检查章节结构。",
   focusAreas: ["章节结构"],
-  outputInstructions: "按角色分段输出。",
   defaultSelected: true,
   source: "global",
   createdAt: "2026-06-10T10:00:00.000Z",

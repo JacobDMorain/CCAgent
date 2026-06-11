@@ -96,11 +96,10 @@ describe("core schemas", () => {
   test("review role schema accepts reusable global and generated roles", () => {
     const parsed = ReviewRoleSchema.parse({
       id: "document-structure",
+      group: "core-technology",
       name: "文档结构审查员",
       description: "检查章节结构和读者路径。",
-      prompt: "你负责检查文档结构。",
       focusAreas: ["章节结构", "重复内容"],
-      outputInstructions: "按角色分段输出。",
       defaultSelected: true,
       source: "global",
       createdAt: "2026-06-10T10:00:00.000Z",
@@ -109,9 +108,12 @@ describe("core schemas", () => {
 
     expect(parsed).toMatchObject({
       id: "document-structure",
+      group: "core-technology",
       source: "global",
       defaultSelected: true
     });
+    expect("prompt" in parsed).toBe(false);
+    expect("outputInstructions" in parsed).toBe(false);
     expect(() =>
       ReviewRoleSchema.parse({
         ...parsed,
@@ -126,6 +128,34 @@ describe("core schemas", () => {
     ).toThrow();
   });
 
+  test("review role schema backfills groups for persisted legacy roles", () => {
+    expect(
+      ReviewRoleSchema.parse({
+        id: "document-structure",
+        name: "文档结构审查员",
+        description: "检查章节结构。",
+        focusAreas: ["章节结构"],
+        defaultSelected: true,
+        source: "global",
+        createdAt: "2026-06-10T10:00:00.000Z",
+        updatedAt: "2026-06-10T10:00:00.000Z"
+      }).group
+    ).toBe("documentation-quality");
+
+    expect(
+      ReviewRoleSchema.parse({
+        id: "legacy-specialist",
+        name: "Legacy specialist",
+        description: "Old custom role.",
+        focusAreas: ["legacy"],
+        defaultSelected: false,
+        source: "global",
+        createdAt: "2026-06-10T10:00:00.000Z",
+        updatedAt: "2026-06-10T10:00:00.000Z"
+      }).group
+    ).toBe("custom");
+  });
+
   test("automation run request can carry reviewer role ids and role snapshots", () => {
     const parsed = AutomationRunRequestSchema.parse({
       cwd: "D:/project",
@@ -134,11 +164,10 @@ describe("core schemas", () => {
       roles: [
         {
           id: "document-structure",
+          group: "core-technology",
           name: "文档结构审查员",
           description: "检查结构。",
-          prompt: "检查结构。",
           focusAreas: ["结构"],
-          outputInstructions: "分段输出。",
           defaultSelected: true,
           source: "global",
           createdAt: "2026-06-10T10:00:00.000Z",
@@ -150,7 +179,10 @@ describe("core schemas", () => {
     });
 
     expect(parsed.reviewers[0].roleIds).toEqual(["document-structure", "fact-consistency"]);
+    expect(parsed.roles?.[0].group).toBe("core-technology");
     expect(parsed.roles?.[0].name).toBe("文档结构审查员");
+    expect("prompt" in parsed.roles![0]).toBe(false);
+    expect("outputInstructions" in parsed.roles![0]).toBe(false);
   });
 
   test("prompt template schema requires known template kind", () => {

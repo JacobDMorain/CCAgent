@@ -4,6 +4,7 @@ import type { AutomationRunRequest, ProviderConfig, ReviewRole } from "@ccagent/
 import { App } from "../src/renderer/App.js";
 import { ProviderForm } from "../src/renderer/components/ProviderForm.js";
 import { TaskTable } from "../src/renderer/components/TaskTable.js";
+import { ReviewRolesPage } from "../src/renderer/routes/ReviewRolesPage.js";
 import { ReviewWorkspacePage } from "../src/renderer/routes/ReviewWorkspacePage.js";
 import { RunsPage } from "../src/renderer/routes/RunsPage.js";
 import { createTranslator } from "../src/renderer/i18n.js";
@@ -318,6 +319,8 @@ describe("GUI renderer", () => {
 
     expect(html).toContain("Global Roles");
     expect(html).toContain("Generated Roles");
+    expect(html).toContain("Documentation Quality");
+    expect(html).toContain("Core Technology");
     expect(html).toContain("文档结构审查员");
     expect(html).toContain("算法一致性审查员");
 
@@ -343,6 +346,30 @@ describe("GUI renderer", () => {
       { provider: "glm", roleIds: ["document-structure", "algorithm-consistency"] }
     ]);
     expect(submitted.roles?.map((role) => role.id)).toEqual(["document-structure", "algorithm-consistency"]);
+  });
+
+  test("ReviewRolesPage groups roles by functional area and edits role group", () => {
+    const html = renderToStaticMarkup(
+      <ReviewRolesPage
+        t={createTranslator("en")}
+        roles={[roleFixture, generatedRoleFixture]}
+        onSave={() => undefined}
+        onDelete={() => undefined}
+      />
+    );
+
+    expect(html).toContain("Documentation Quality");
+    expect(html).toContain("Core Technology");
+    expect(html).toContain("1 role");
+    expect(html).toContain("Group");
+    expect(html).toContain('name="group"');
+    expect(html).toContain('type="radio"');
+    expect(html).toContain('value="documentation-quality"');
+    expect(html).toContain("Custom group");
+    expect(html).toContain('name="customGroup"');
+    expect(html).not.toContain('list="review-role-groups"');
+    expect(html).not.toContain("Role prompt");
+    expect(html).not.toContain("Output instructions");
   });
 });
 
@@ -389,11 +416,10 @@ const runFixture = {
 
 const roleFixture: ReviewRole = {
   id: "document-structure",
+  group: "documentation-quality",
   name: "文档结构审查员",
   description: "检查章节结构。",
-  prompt: "你负责检查章节结构。",
   focusAreas: ["章节结构"],
-  outputInstructions: "按角色分段输出。",
   defaultSelected: true,
   source: "global",
   createdAt: "2026-06-10T10:00:00.000Z",
@@ -402,11 +428,10 @@ const roleFixture: ReviewRole = {
 
 const generatedRoleFixture: ReviewRole = {
   id: "algorithm-consistency",
+  group: "core-technology",
   name: "算法一致性审查员",
   description: "检查算法描述和上下文一致性。",
-  prompt: "你负责检查算法一致性。",
   focusAreas: ["公式", "伪代码"],
-  outputInstructions: "按角色分段输出。",
   defaultSelected: true,
   source: "generated",
   createdAt: "2026-06-10T10:00:00.000Z",

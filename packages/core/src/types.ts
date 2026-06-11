@@ -81,11 +81,10 @@ export interface ReviewBatchRequest {
 
 export interface ReviewRole {
   id: string;
+  group: string;
   name: string;
   description: string;
-  prompt: string;
   focusAreas: string[];
-  outputInstructions: string;
   defaultSelected: boolean;
   source: "global" | "generated";
   createdAt: string;

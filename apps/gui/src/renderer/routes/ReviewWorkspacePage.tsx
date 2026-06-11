@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import type { AutomationRunRequest, PromptTemplate, ProviderConfig, ReviewRole } from "@ccagent/core";
 import type { Locale, Translator } from "../i18n.js";
+import { groupReviewRoles } from "../reviewRoleGroups.js";
 
 export interface ReviewWorkspacePageProps {
   locale: Locale;
@@ -105,9 +107,13 @@ export function ReviewWorkspacePage({
           <div className="section-header compact-header">
             <h3>{t("globalRoles")}</h3>
           </div>
-          <div className="provider-checks">
-            {globalRoles.map((role) => (
-              <RoleCheckRow key={role.id} role={role} defaultChecked={role.defaultSelected} />
+          <div className="role-group-list">
+            {groupReviewRoles(globalRoles, locale).map((group) => (
+              <RoleGroupBlock key={group.id} label={group.label}>
+                {group.roles.map((role) => (
+                  <RoleCheckRow key={role.id} role={role} defaultChecked={role.defaultSelected} />
+                ))}
+              </RoleGroupBlock>
             ))}
           </div>
           <div className="section-header compact-header">
@@ -134,16 +140,20 @@ export function ReviewWorkspacePage({
               <span>{t("generateRolesFromDocument")}</span>
             )}
           </div>
-          <div className="provider-checks">
-            {generatedRoles.map((role) => (
-              <div className="check-row role-row" key={role.id}>
-                <RoleCheckRow role={role} defaultChecked={role.defaultSelected} />
-                {onPromoteGeneratedRole ? (
-                  <button type="button" onClick={() => void onPromoteGeneratedRole(role)}>
-                    {t("promoteRole")}
-                  </button>
-                ) : null}
-              </div>
+          <div className="role-group-list">
+            {groupReviewRoles(generatedRoles, locale).map((group) => (
+              <RoleGroupBlock key={group.id} label={group.label}>
+                {group.roles.map((role) => (
+                  <div className="check-row role-row" key={role.id}>
+                    <RoleCheckRow role={role} defaultChecked={role.defaultSelected} />
+                    {onPromoteGeneratedRole ? (
+                      <button type="button" onClick={() => void onPromoteGeneratedRole(role)}>
+                        {t("promoteRole")}
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </RoleGroupBlock>
             ))}
           </div>
         </div>
@@ -151,6 +161,15 @@ export function ReviewWorkspacePage({
           <button type="submit">{t("startFullyAutomaticRun")}</button>
         </div>
       </form>
+    </section>
+  );
+}
+
+function RoleGroupBlock({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="role-group">
+      <h4>{label}</h4>
+      <div className="provider-checks">{children}</div>
     </section>
   );
 }
